@@ -1,0 +1,132 @@
+#!/bin/bash
+
+# Copyright 2019 Dmitri Rubinstein
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -eo pipefail
+export LC_ALL=C
+unset CDPATH
+
+THIS_DIR=$( (cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) )
+
+# shellcheck source=kube-shlib.sh
+source "$THIS_DIR/kube-shlib.sh"
+
+define-kubectl-funcs
+
+if [[ "$1" == "--as-rsh" ]]; then
+    shift 1
+    if [[ "$1" == "-l" ]]; then
+        RSYNC_USER=$2
+        shift 2
+    fi
+    RSYNC_HOST=$1
+    shift 1
+
+    if [[ -n "$RSYNC_USER" ]]; then
+        POD_NAME_PREFIX=$RSYNC_USER
+        if [[ -n "$RSYNC_HOST" ]]; then
+            POD_NAMESPACE=$RSYNC_HOST
+        fi
+    else
+        POD_NAME_PREFIX=$RSYNC_HOST
+    fi
+    if ! POD_NAME=$(wait-for-pod ${POD_NAMESPACE:+--namespace $POD_NAMESPACE} --trials 1 --run-checks 0 --delay 0 "$POD_NAME_PREFIX"); 
+    then
+        echo >&2 "Error: no pod with prefix $POD_NAME_PREFIX found in namespace $POD_NAMESPACE"
+        exit 1
+    fi
+    
+    echo >&2 "* Connect to pod $POD_NAME in namespace $POD_NAMESPACE"
+    set -x
+    # shellcheck disable=2086
+    exec "${KUBECTL}" ${KUBECTL_OPTS} ${KUBE_CONTEXT:+--context=${KUBE_CONTEXT}} \
+        exec \
+        ${POD_NAMESPACE:+--namespace=${POD_NAMESPACE}} \
+        ${POD_CONTAINER:+--container=${POD_CONTAINER}} \
+        "${POD_NAME}" -i -- "$@"
+fi
+
+usage() {
+	echo "Rsync to/from the k8s pod"
+    echo ""
+    echo "$(basename "$0") [options] [--] [rsync-options] src_path dest_path"
+    echo ""
+    echo "paths starting with 'pod-name-prefix[@pod-namespace]:' are remote on specified pod"
+    echo ""
+    echo "environment variables:"
+	echo "  KUBECTL                    Name of the kubectl command to use"
+	echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
+	echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
+	echo "  KUBECTL_OPTS               Additional options for kubectl"
+    echo ""
+	echo "options:"
+    echo "  -n, --namespace=''         Namespace of the pod"
+	echo "      --context=''           The name of the kubeconfig context to use."
+	echo "                             Has precedence over KUBE_CONTEXT variable."
+    echo "  -c, --container=''         Container name. If omitted, the first container in the pod will be chosen"
+	echo "      --help                 Display this help and exit"
+	echo "      --                     End of options"
+}
+
+POD_NAMESPACE=$(kube-current-namespace)
+POD_CONTAINER=
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --context)
+            KUBE_CONTEXT="$2"
+            shift 2
+            ;;
+        --context=*)
+            KUBE_CONTEXT="${1#*=}"
+            shift
+            ;;
+        -c | --container)
+            POD_CONTAINER="$2"
+            shift 2
+            ;;
+        --container=*)
+            POD_CONTAINER="${1#*=}"
+            shift
+            ;;
+        -n | --namespace)
+            POD_NAMESPACE="$2"
+            shift 2
+            ;;
+        --namespace=*)
+            POD_NAMESPACE="${1#*=}"
+            shift
+            ;;
+        --help)
+            usage
+            exit
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            break # possibly rsync option
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+export KUBECTL KUBECTL_OPTS KUBE_CONTEXT POD_NAMESPACE POD_CONTAINER
+
+set -x
+rsync -avur --blocking-io --rsh="$0 --as-rsh" "$@"

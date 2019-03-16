@@ -1,0 +1,225 @@
+#!/bin/bash
+
+# Copyright 2019 Dmitri Rubinstein
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -eo pipefail
+export LC_ALL=C
+unset CDPATH
+
+THIS_DIR=$( (cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P))
+
+# shellcheck source=kube-shlib.sh
+source "$THIS_DIR/kube-shlib.sh"
+
+define-kubectl-funcs
+
+_get_children_pids() {
+    local pid=$1
+    local all_pids=$2
+    local children
+    for child in $(awk "{ if ( \$2 == $pid ) { print \$1 } }" <<<"$all_pids"); do
+        children="$(_get_children_pids $child "$all_pids") $child $children"
+    done
+    echo "$children"
+}
+
+get_children_pids() {
+    local pid=$1 all_pids
+    all_pids=$(ps -o pid,ppid -ax)
+    _get_children_pids "$pid" "$all_pids"
+}
+
+if [[ "$1" == "--port-forward" ]]; then
+    shift
+
+    if [[ $# -lt 4 ]]; then
+        echo >&2 "Fatal: --port-forward option require 4 arguments: CFG_DIR POD_NAME POD_NAMESPACE LOCAL_PORT"
+        exit 1
+    fi
+
+    CFG_DIR=$1
+    POD_NAME=$2
+    POD_NAMESPACE=$3
+    LOCAL_PORT=$4
+    KUBECTL_PIDS=
+
+    cleanup() {
+        if [[ -n "$KUBECTL_PIDS" ]]; then
+            echo "Stopping docker port forwarding (pids: $KUBECTL_PIDS)  ..."
+            kill $KUBECTL_PIDS 2>/dev/null
+            KUBECTL_PIDS=
+        fi
+        rm -rf "$CFG_DIR"
+    }
+
+    trap cleanup INT TERM EXIT
+    run-kubectl-ctx port-forward --namespace="$POD_NAMESPACE" "$POD_NAME" "$LOCAL_PORT:2375" &
+    WAIT_PID=$!
+    KUBECTL_PIDS="$(get_children_pids $WAIT_PID) $WAIT_PID"
+    wait $WAIT_PID
+    exit $?
+fi
+
+POD_NAMESPACE=$(kube-current-namespace)
+POD_NAME=docker-gateway
+
+usage() {
+    echo "Connect to the docker daemon running in the Kubernetes cluster."
+    echo "Similar to '\$(minikube docker-env)' and '\$(docker-machine env)'."
+    echo ""
+    echo "$(basename "$0") [options]"
+    echo ""
+    echo "This script creates connector pod which connects local machine to the remote docker server."
+    echo ""
+    echo "environment variables:"
+    echo "  KUBECTL                    Name of the kubectl command to use"
+    echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
+    echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
+    echo "  KUBECTL_OPTS               Additional options for kubectl"
+    echo ""
+    echo "options:"
+    echo "  -n, --namespace=''         Namespace of the connector pod (default: $POD_NAMESPACE)"
+    echo "  -p, --pod=''               Name of the connector pod (default: $POD_NAME)"
+    echo "      --context=''           The name of the kubeconfig context to use."
+    echo "                             Has precedence over KUBE_CONTEXT variable."
+    echo "      --help                 Display this help and exit"
+    echo "      --                     End of options"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --context)
+            KUBE_CONTEXT="$2"
+            shift 2
+            ;;
+        --context=*)
+            KUBE_CONTEXT="${1#*=}"
+            shift
+            ;;
+        -p | --pod)
+            POD_NAME="$2"
+            shift 2
+            ;;
+        -n | --namespace)
+            POD_NAMESPACE="$2"
+            shift 2
+            ;;
+        --namespace=*)
+            POD_NAMESPACE="${1#*=}"
+            shift
+            ;;
+        --pod=*)
+            POD_NAME="${1#*=}"
+            shift
+            ;;
+        --help)
+            usage
+            exit
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            break # possibly rsync option
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+while true; do
+    if ! PHASE=$(run-kubectl-ctx get pod --namespace="$POD_NAMESPACE" "$POD_NAME" -o template --template '{{ .status.phase }}' 2>/dev/null) ||
+        [[ "$PHASE" == "Terminating" || "$PHASE" == "Failed" || "$PHASE" == "Succeeded" ]]; then
+        if [[ "$PHASE" == "Failed" || "$PHASE" == "Succeeded" ]]; then
+            run-kubectl-ctx delete pod --namespace="$POD_NAMESPACE" "$POD_NAME" >&2
+        fi
+        msg "* Start Pod $POD_NAME in namespace $POD_NAMESPACE"
+
+        cat <<EOF | run-kubectl-ctx create -f - >&2
+apiVersion: v1
+kind: Pod
+metadata:
+  name: $POD_NAME
+  namespace: $POD_NAMESPACE
+spec:
+  containers:
+  - name: socat
+    image: alpine/socat
+    args: [ "TCP4-LISTEN:2375,fork,reuseaddr",  "UNIX-CONNECT:/var/run/docker.sock"]
+    volumeMounts:
+    - mountPath: /var/run/docker.sock
+      name: docker-sock
+    ports:
+    - name: docker
+      containerPort: 2375
+  volumes:
+  - name: docker-sock
+    hostPath:
+      path: /var/run/docker.sock
+EOF
+
+        msg "Waiting until Pod is started ..."
+        continue
+    fi
+    if [[ -n "$VERBOSE" ]]; then
+        msg "* Pod $POD_NAME in phase: $PHASE"
+    fi
+    if [[ "$PHASE" == "Running" ]]; then
+        break
+    fi
+    sleep 1
+done
+
+LOCAL_PORT=""
+pid=""
+CFG_DIR=~/".kube-docker-env-$(kube-current-context)"
+if [[ -d "$CFG_DIR" && -e "$CFG_DIR/docker-port" && -e "$CFG_DIR/pid" ]]; then
+    LOCAL_PORT=$(<"$CFG_DIR/docker-port")
+    pid=$(<"$CFG_DIR/pid")
+    if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$CFG_DIR/pid" "$CFG_DIR/docker-port"
+        pid=""
+        LOCAL_PORT=""
+    fi
+fi
+
+if [[ -z "$LOCAL_PORT" || -z "$pid" ]]; then
+    mkdir -p "$CFG_DIR"
+    LOCAL_PORT=$(python -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+    # run-kubectl-ctx port-forward "$POD_NAME" $LOCAL_PORT:2375 >&2 &
+    "$0" --port-forward "$CFG_DIR" "$POD_NAME" "$POD_NAMESPACE" "$LOCAL_PORT" >&2 &
+    pid=$!
+    echo "$LOCAL_PORT" >"$CFG_DIR/docker-port"
+    echo "$pid" >"$CFG_DIR/pid"
+fi
+
+cat <<EOF
+export DOCKER_HOST=tcp://127.0.0.1:$LOCAL_PORT;
+unset DOCKER_TLS_VERIFY
+unset DOCKER_CERT_PATH
+unset DOCKER_API_VERSION
+kube-stop-docker() {
+  unset DOCKER_HOST;
+  unset -f kube-stop-docker;
+  kill $(get_children_pids $pid) $pid;
+};
+
+# Run this command to configure your shell:
+# eval "\$($0)"
+# Stop port forwarding by running:
+# kube-stop-docker
+EOF

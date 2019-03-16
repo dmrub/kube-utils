@@ -1,0 +1,222 @@
+#!/bin/bash -e
+
+# Based on https://github.com/pieterlange/kube-backup
+# Original Copyright
+# The MIT License (MIT)
+#
+# Copyright (c) 2016 Pieter Lange
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+set -eo pipefail
+export LC_ALL=C
+unset CDPATH
+
+THIS_DIR=$( (cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P))
+
+# shellcheck source=kube-shlib.sh
+source "$THIS_DIR/kube-shlib.sh"
+
+define-kubectl-funcs
+
+# Defaults
+DEFAULT_RESOURCETYPES="ingress deployment configmap svc rc ds networkpolicy statefulset cronjob pvc secret"
+DEFAULT_GLOBALRESOURCES="namespace storageclass clusterrole clusterrolebinding customresourcedefinition persistentvolume"
+
+DEST_DIR=$PWD
+NAMESPACES=
+RESOURCETYPES=
+GLOBALRESOURCES=
+INCLUDE_TILLER_CONFIGMAPS=
+
+usage() {
+	echo "Backup Kubernetes state to set of YAML files"
+	echo "Based on https://github.com/pieterlange/kube-backup"
+	echo
+	echo "$(basename "$0") [options] [dest-dir]"
+	echo ""
+	echo "When dest-dir is not specified current directory is used ($PWD)"
+	echo ""
+	echo "environment variables:"
+	echo "  KUBECTL                    Name of the kubectl command to use"
+	echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
+	echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
+	echo "  KUBECTL_OPTS               Additional options for kubectl"
+	echo ""
+	echo "options:"
+	echo "  -c, --context              The name of the kubeconfig context to use."
+	echo "                             Has precedence over KUBE_CONTEXT variable."
+	echo "  -n, --namespace(s)=        Namespaces to backup separted by spaces."
+	echo "                             Multiple namespace arguments are concatenated"
+	echo "  -r, --resourcetype(s)=     Resource types to backup separted by spaces."
+	echo "                             Multiple resourcetype arguments are concatenated"
+	echo "  -g, --globalresource(s)=   Global resources to backup separted by spaces."
+	echo "                             Multiple global resource arguments are concatenated"
+	echo "      --include-tiller-configmaps"
+	echo "                             Include Tiller configmaps into backup"
+	echo "      --help                 Display this help and exit"
+	echo "      --                     End of options"
+}
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	-c | --context)
+		KUBE_CONTEXT="$2"
+		shift 2
+		;;
+	--context=*)
+		KUBE_CONTEXT="${1#*=}"
+		shift
+		;;
+	-n | --namespace | --namespaces)
+		NAMESPACES="$NAMESPACES $2"
+		shift 2
+		;;
+	--namespace=* | --namespaces=*)
+		NAMESPACES="$NAMESPACES ${1#*=}"
+		shift
+		;;
+	-r | --resourcetype | --resourcetypes)
+		RESOURCETYPES="$RESOURCETYPES $2"
+		shift 2
+		;;
+	--resourcetype=* | --resourcetypes=*)
+		RESOURCETYPES="$RESOURCETYPES ${1#*=}"
+		shift
+		;;
+	-g | --globalresource | --globalresources)
+		GLOBALRESOURCES="$GLOBALRESOURCES $2"
+		shift 2
+		;;
+	--globalresource=* | --globalresources=*)
+		GLOBALRESOURCES="$GLOBALRESOURCES ${1#*=}"
+		shift
+		;;
+	--include-tiller-configmaps)
+		INCLUDE_TILLER_CONFIGMAPS=true
+		shift
+		;;
+	--help)
+		usage
+		exit
+		;;
+	--)
+		shift
+		break
+		;;
+	-*)
+		fatal "Unknown option $1"
+		;;
+	*)
+		break
+		;;
+	esac
+done
+
+if [[ $# -gt 1 ]]; then
+	fatal "Too many arguments"
+fi
+
+if [[ $# -eq 1 ]]; then
+	DEST_DIR=$1
+fi
+
+if [ -n "$(ls -A "$DEST_DIR" 2>/dev/null)" ]; then
+	echo "Error: Directory $DEST_DIR is not empty !" >&2
+	exit 1
+fi
+
+if [[ -z "$NAMESPACES" ]]; then
+	NAMESPACES=$(run-kubectl-ctx get ns -o jsonpath={.items[*].metadata.name})
+fi
+if [[ -z "$RESOURCETYPES" ]]; then
+	RESOURCETYPES=$DEFAULT_RESOURCETYPES
+fi
+if [[ -z "$GLOBALRESOURCES" ]]; then
+	GLOBALRESOURCES=$DEFAULT_GLOBALRESOURCES
+fi
+
+echo "Destination directory:      $DEST_DIR"
+if [[ -n "$KUBE_CONTEXT" ]]; then
+	echo "Kubectl context:            $KUBE_CONTEXT"
+else
+	echo "Kubectl context:            current ( $(kube-current-context) )"
+fi
+echo "Namespaces to backup:       $NAMESPACES"
+echo "Resource types to backup:   $RESOURCETYPES"
+echo "Global resources to backup: $GLOBALRESOURCES"
+
+mkdir -p "$DEST_DIR"
+
+# Start kubernetes state export
+for resource in $GLOBALRESOURCES; do
+	echo "Exporting resource: ${resource}" >/dev/stderr
+	res_js=$(run-kubectl-ctx get -o=json "$resource") || continue
+
+	jq --sort-keys \
+		'del(
+          .metadata.resourceVersion,
+          .metadata.selfLink,
+          .items[].metadata.annotations."kubectl.kubernetes.io/last-applied-configuration",
+          .items[].metadata.annotations."control-plane.alpha.kubernetes.io/leader",
+          .items[].metadata.uid,
+          .items[].metadata.selfLink,
+          .items[].metadata.resourceVersion,
+          .items[].metadata.creationTimestamp,
+          .items[].metadata.generation,
+          .items[].spec.claimRef.resourceVersion
+      )' <<<"$res_js" | python -c 'import sys, yaml, json; yaml.safe_dump(json.load(sys.stdin), sys.stdout, default_flow_style=False)' >"$DEST_DIR/${resource}.yaml"
+done
+
+for namespace in $NAMESPACES; do
+	[ -d "$DEST_DIR/${namespace}" ] || mkdir -p "$DEST_DIR/${namespace}"
+
+	for type in $RESOURCETYPES; do
+		echo "[${namespace}] Exporting resources: ${type}" >/dev/stderr
+
+		label_selector=""
+		if [[ "$type" == 'configmap' && -z "${INCLUDE_TILLER_CONFIGMAPS:-}" ]]; then
+			label_selector="-l OWNER!=TILLER"
+		fi
+
+		res_list=$(run-kubectl-ctx --namespace="${namespace}" get "$type" $label_selector -o custom-columns=SPACE:.metadata.namespace,KIND:..kind,NAME:.metadata.name --no-headers) || continue
+
+		while read -r a b name; do
+			[ -z "$name" ] && continue
+
+			# Service account tokens cannot be exported
+			if [[ "$type" == 'secret' && $(run-kubectl-ctx get -n "${namespace}" -o jsonpath="{.type}" secret "$name") == "kubernetes.io/service-account-token" ]]; then
+				continue
+			fi
+
+			run-kubectl-ctx --namespace="${namespace}" get -o=json "$type" "$name" | jq --sort-keys \
+				'del(
+            .metadata.annotations."control-plane.alpha.kubernetes.io/leader",
+            .metadata.annotations."kubectl.kubernetes.io/last-applied-configuration",
+            .metadata.creationTimestamp,
+            .metadata.generation,
+            .metadata.resourceVersion,
+            .metadata.selfLink,
+            .metadata.uid,
+            .spec.clusterIP,
+            .status
+            )' | python -c 'import sys, yaml, json; yaml.safe_dump(json.load(sys.stdin), sys.stdout, default_flow_style=False)' >"$DEST_DIR/${namespace}/${name}.${type}.yaml"
+		done <<<"$res_list"
+	done
+done
