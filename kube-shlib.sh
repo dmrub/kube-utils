@@ -76,7 +76,7 @@ define-kubectl-funcs() {
     kube-current-namespace() {
         local cur_ctx ns
         cur_ctx=$(kube-current-context)
-        ns="$(kubectl config view -o=jsonpath="{.contexts[?(@.name==\"${cur_ctx}\")].context.namespace}")"
+        ns=$(run-kubectl-ctx config view -o=jsonpath="{.contexts[?(@.name==\"${cur_ctx}\")].context.namespace}")
         if [[ -z "${ns}" ]]; then
             echo "default"
         else
