@@ -18,7 +18,7 @@ set -eo pipefail
 export LC_ALL=C
 unset CDPATH
 
-THIS_DIR=$( (cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) )
+THIS_DIR=$( (cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P))
 
 # shellcheck source=kube-shlib.sh
 source "$THIS_DIR/kube-shlib.sh"
@@ -42,12 +42,12 @@ if [[ "$1" == "--as-rsh" ]]; then
     else
         POD_NAME_PREFIX=$RSYNC_HOST
     fi
-    if ! POD_NAME=$(wait-for-pod ${POD_NAMESPACE:+--namespace $POD_NAMESPACE} --trials 1 --run-checks 0 --delay 0 "$POD_NAME_PREFIX"); 
+    if ! POD_NAME=$(wait-for-pod ${POD_NAMESPACE:+--namespace $POD_NAMESPACE} --trials 1 --run-checks 0 --delay 0 "$POD_NAME_PREFIX");
     then
         echo >&2 "Error: no pod with prefix $POD_NAME_PREFIX found in namespace $POD_NAMESPACE"
         exit 1
     fi
-    
+
     echo >&2 "* Connect to pod $POD_NAME in namespace $POD_NAMESPACE"
     set -x
     # shellcheck disable=2086
@@ -59,25 +59,25 @@ if [[ "$1" == "--as-rsh" ]]; then
 fi
 
 usage() {
-	echo "Rsync to/from the k8s pod"
+    echo "Rsync to/from the k8s pod"
     echo ""
     echo "$(basename "$0") [options] [--] [rsync-options] src_path dest_path"
     echo ""
     echo "paths starting with 'pod-name-prefix[@pod-namespace]:' are remote on specified pod"
     echo ""
     echo "environment variables:"
-	echo "  KUBECTL                    Name of the kubectl command to use"
-	echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
-	echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
-	echo "  KUBECTL_OPTS               Additional options for kubectl"
+    echo "  KUBECTL                    Name of the kubectl command to use"
+    echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
+    echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
+    echo "  KUBECTL_OPTS               Additional options for kubectl"
     echo ""
-	echo "options:"
+    echo "options:"
     echo "  -n, --namespace=''         Namespace of the pod"
-	echo "      --context=''           The name of the kubeconfig context to use."
-	echo "                             Has precedence over KUBE_CONTEXT variable."
+    echo "      --context=''           The name of the kubeconfig context to use."
+    echo "                             Has precedence over KUBE_CONTEXT variable."
     echo "  -c, --container=''         Container name. If omitted, the first container in the pod will be chosen"
-	echo "      --help                 Display this help and exit"
-	echo "      --                     End of options"
+    echo "      --help                 Display this help and exit"
+    echo "      --                     End of options"
 }
 
 POD_NAMESPACE=$(kube-current-namespace)
@@ -85,44 +85,44 @@ POD_CONTAINER=
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --context)
-            KUBE_CONTEXT="$2"
-            shift 2
-            ;;
-        --context=*)
-            KUBE_CONTEXT="${1#*=}"
-            shift
-            ;;
-        -c | --container)
-            POD_CONTAINER="$2"
-            shift 2
-            ;;
-        --container=*)
-            POD_CONTAINER="${1#*=}"
-            shift
-            ;;
-        -n | --namespace)
-            POD_NAMESPACE="$2"
-            shift 2
-            ;;
-        --namespace=*)
-            POD_NAMESPACE="${1#*=}"
-            shift
-            ;;
-        --help)
-            usage
-            exit
-            ;;
-        --)
-            shift
-            break
-            ;;
-        -*)
-            break # possibly rsync option
-            ;;
-        *)
-            break
-            ;;
+    --context)
+        KUBE_CONTEXT="$2"
+        shift 2
+        ;;
+    --context=*)
+        KUBE_CONTEXT="${1#*=}"
+        shift
+        ;;
+    -c | --container)
+        POD_CONTAINER="$2"
+        shift 2
+        ;;
+    --container=*)
+        POD_CONTAINER="${1#*=}"
+        shift
+        ;;
+    -n | --namespace)
+        POD_NAMESPACE="$2"
+        shift 2
+        ;;
+    --namespace=*)
+        POD_NAMESPACE="${1#*=}"
+        shift
+        ;;
+    --help)
+        usage
+        exit
+        ;;
+    --)
+        shift
+        break
+        ;;
+    -*)
+        break # possibly rsync option
+        ;;
+    *)
+        break
+        ;;
     esac
 done
 

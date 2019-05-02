@@ -100,44 +100,44 @@ usage() {
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --context)
-            KUBE_CONTEXT="$2"
-            shift 2
-            ;;
-        --context=*)
-            KUBE_CONTEXT="${1#*=}"
-            shift
-            ;;
-        -p | --pod)
-            POD_NAME="$2"
-            shift 2
-            ;;
-        -n | --namespace)
-            POD_NAMESPACE="$2"
-            shift 2
-            ;;
-        --namespace=*)
-            POD_NAMESPACE="${1#*=}"
-            shift
-            ;;
-        --pod=*)
-            POD_NAME="${1#*=}"
-            shift
-            ;;
-        --help)
-            usage
-            exit
-            ;;
-        --)
-            shift
-            break
-            ;;
-        -*)
-            break # possibly rsync option
-            ;;
-        *)
-            break
-            ;;
+    --context)
+        KUBE_CONTEXT="$2"
+        shift 2
+        ;;
+    --context=*)
+        KUBE_CONTEXT="${1#*=}"
+        shift
+        ;;
+    -p | --pod)
+        POD_NAME="$2"
+        shift 2
+        ;;
+    -n | --namespace)
+        POD_NAMESPACE="$2"
+        shift 2
+        ;;
+    --namespace=*)
+        POD_NAMESPACE="${1#*=}"
+        shift
+        ;;
+    --pod=*)
+        POD_NAME="${1#*=}"
+        shift
+        ;;
+    --help)
+        usage
+        exit
+        ;;
+    --)
+        shift
+        break
+        ;;
+    -*)
+        break # possibly rsync option
+        ;;
+    *)
+        break
+        ;;
     esac
 done
 

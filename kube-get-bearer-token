@@ -1,6 +1,5 @@
 #!/bin/bash
 
-
 # Copyright 2019 Dmitri Rubinstein
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +18,7 @@ set -eo pipefail
 export LC_ALL=C
 unset CDPATH
 
-THIS_DIR=$( (cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) )
+THIS_DIR=$( (cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P))
 
 # shellcheck source=kube-shlib.sh
 source "$THIS_DIR/kube-shlib.sh"
@@ -27,47 +26,47 @@ source "$THIS_DIR/kube-shlib.sh"
 define-kubectl-funcs
 
 usage() {
-	echo "Get bearer token from kube-system:admin-user service account."
-	echo "Bearer token can be used to login into Kubernetes Dashboard"
+    echo "Get bearer token from kube-system:admin-user service account."
+    echo "Bearer token can be used to login into Kubernetes Dashboard"
     echo ""
     echo "$(basename "$0") [options]"
     echo ""
     echo "environment variables:"
-	echo "  KUBECTL                    Name of the kubectl command to use"
-	echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
-	echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
-	echo "  KUBECTL_OPTS               Additional options for kubectl"
-	echo "options:"
-	echo "  -c, --context              The name of the kubeconfig context to use."
-	echo "      --help                 Display this help and exit"
-	echo "      --                     End of options"
+    echo "  KUBECTL                    Name of the kubectl command to use"
+    echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
+    echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
+    echo "  KUBECTL_OPTS               Additional options for kubectl"
+    echo "options:"
+    echo "  -c, --context              The name of the kubeconfig context to use."
+    echo "      --help                 Display this help and exit"
+    echo "      --                     End of options"
 }
 
 while [[ $# -gt 0 ]]; do
-	case "$1" in
-	-c | --context)
-		KUBE_CONTEXT="$2"
-		shift 2
-		;;
-	--context=*)
-		KUBE_CONTEXT="${1#*=}"
-		shift
-		;;
-	--help)
-		usage
-		exit
-		;;
-	--)
-		shift
-		break
-		;;
-	-*)
-		fatal "Unknown option $1"
-		;;
-	*)
-		break
-		;;
-	esac
+    case "$1" in
+    -c | --context)
+        KUBE_CONTEXT="$2"
+        shift 2
+        ;;
+    --context=*)
+        KUBE_CONTEXT="${1#*=}"
+        shift
+        ;;
+    --help)
+        usage
+        exit
+        ;;
+    --)
+        shift
+        break
+        ;;
+    -*)
+        fatal "Unknown option $1"
+        ;;
+    *)
+        break
+        ;;
+    esac
 done
 KUBE_USER=admin-user
 SECRETS=$(run-kubectl-ctx -n kube-system get secret -o template -o go-template='{{ range.items }}{{ .metadata.name }}{{"\n"}}{{end}}')

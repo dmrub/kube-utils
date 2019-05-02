@@ -28,59 +28,59 @@ define-kubectl-funcs
 USER_NAME=admin-user
 
 usage() {
-	echo "Create service account with cluster-admin ClusterRole in kube-system namespace"
-	echo ""
-	echo "$(basename "$0") [options]"
-	echo ""
-	echo "environment variables:"
-	echo "  KUBECTL                    Name of the kubectl command to use"
-	echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
-	echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
-	echo "  KUBECTL_OPTS               Additional options for kubectl"
-	echo "options:"
-	echo "  -u, --user                 Name of the admin user to create (default: $USER_NAME)"
-	echo "  -c, --context              The name of the kubeconfig context to use."
-	echo "      --help                 Display this help and exit"
-	echo "      --                     End of options"
+    echo "Create service account with cluster-admin ClusterRole in kube-system namespace"
+    echo ""
+    echo "$(basename "$0") [options]"
+    echo ""
+    echo "environment variables:"
+    echo "  KUBECTL                    Name of the kubectl command to use"
+    echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
+    echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
+    echo "  KUBECTL_OPTS               Additional options for kubectl"
+    echo "options:"
+    echo "  -u, --user                 Name of the admin user to create (default: $USER_NAME)"
+    echo "  -c, --context              The name of the kubeconfig context to use."
+    echo "      --help                 Display this help and exit"
+    echo "      --                     End of options"
 }
 
 while [[ $# -gt 0 ]]; do
-	case "$1" in
-	-c | --context)
-		KUBE_CONTEXT="$2"
-		shift 2
-		;;
-	--context=*)
-		KUBE_CONTEXT="${1#*=}"
-		shift
-		;;
-	-u | --user)
-		USER_NAME="$2"
-		shift 2
-		;;
-	--user=*)
-		USER_NAME="${1#*=}"
-		shift
-		;;
-	--help)
-		usage
-		exit
-		;;
-	--)
-		shift
-		break
-		;;
-	-*)
-		fatal "Unknown option $1"
-		;;
-	*)
-		break
-		;;
-	esac
+    case "$1" in
+    -c | --context)
+        KUBE_CONTEXT="$2"
+        shift 2
+        ;;
+    --context=*)
+        KUBE_CONTEXT="${1#*=}"
+        shift
+        ;;
+    -u | --user)
+        USER_NAME="$2"
+        shift 2
+        ;;
+    --user=*)
+        USER_NAME="${1#*=}"
+        shift
+        ;;
+    --help)
+        usage
+        exit
+        ;;
+    --)
+        shift
+        break
+        ;;
+    -*)
+        fatal "Unknown option $1"
+        ;;
+    *)
+        break
+        ;;
+    esac
 done
 
 if ! run-kubectl-ctx get clusterrole cluster-admin >/dev/null; then
-	fatal "No ClusterRole cluster-admin"
+    fatal "No ClusterRole cluster-admin"
 fi
 
 msg "Create user \"$USER_NAME\""
@@ -108,9 +108,9 @@ subjects:
 EOF
 
 for i in $(run-kubectl-ctx -n kube-system get secret \
-	-o go-template='{{range.items}}{{ .metadata.name }} {{end}}'); do
-	if [[ "$i" == ${USER_NAME}-* ]]; then
-		run-kubectl-ctx -n kube-system describe secret "$i"
-		break
-	fi
+    -o go-template='{{range.items}}{{ .metadata.name }} {{end}}'); do
+    if [[ "$i" == ${USER_NAME}-* ]]; then
+        run-kubectl-ctx -n kube-system describe secret "$i"
+        break
+    fi
 done

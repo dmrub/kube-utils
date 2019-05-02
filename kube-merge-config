@@ -19,7 +19,7 @@ set -eo pipefail
 export LC_ALL=C
 unset CDPATH
 
-THIS_DIR=$( (cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) )
+THIS_DIR=$( (cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P))
 
 # shellcheck source=kube-shlib.sh
 source "$THIS_DIR/kube-shlib.sh"
@@ -44,5 +44,5 @@ fi
 
 TMPF=$(mktemp)
 trap '{ rm -f "$TMPF"; }' EXIT
-KUBECONFIG=~/.kube/config:"$1" run-kubectl-ctx config view --flatten > "$TMPF"
+KUBECONFIG=~/.kube/config:"$1" run-kubectl-ctx config view --flatten >"$TMPF"
 mv "$TMPF" ~/.kube/config
