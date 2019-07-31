@@ -1,0 +1,130 @@
+#!/bin/bash
+
+# Copyright 2019 Dmitri Rubinstein
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -eo pipefail
+export LC_ALL=C
+unset CDPATH
+
+THIS_DIR=$( (cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P))
+
+# shellcheck source=kube-shlib.sh
+source "$THIS_DIR/kube-shlib.sh"
+
+define-kubectl-funcs
+
+USER_NAME=admin-user
+OUTPUT=
+
+usage() {
+    echo "Create Kubernetes configuration file from bearer token of the specified user service account"
+    echo ""
+    echo "$(basename "$0") [options]"
+    echo ""
+    echo "environment variables:"
+    echo "  KUBECTL                    Name of the kubectl command to use"
+    echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
+    echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
+    echo "  KUBECTL_OPTS               Additional options for kubectl"
+    echo "options:"
+    echo "  -u, --user                 Name of the user service account in namespace kube-system (default: $USER_NAME)"
+    echo "  -c, --context              The name of the kubeconfig context to use."
+    echo "  -o, --output               The name of the kubeconfig file to output (default: $USER_NAME.conf)"
+    echo "      --help                 Display this help and exit"
+    echo "      --                     End of options"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -c | --context)
+        KUBE_CONTEXT="$2"
+        shift 2
+        ;;
+    --context=*)
+        KUBE_CONTEXT="${1#*=}"
+        shift
+        ;;
+    -u | --user)
+        USER_NAME="$2"
+        shift 2
+        ;;
+    --user=*)
+        USER_NAME="${1#*=}"
+        shift
+        ;;
+    -o | --output)
+        OUTPUT="$2"
+        shift 2
+        ;;
+    --output=*)
+        OUTPUT="${1#*=}"
+        shift
+        ;;
+    --help)
+        usage
+        exit
+        ;;
+    --)
+        shift
+        break
+        ;;
+    -*)
+        fatal "Unknown option $1"
+        ;;
+    *)
+        break
+        ;;
+    esac
+done
+
+if [[ -z "$OUTPUT" ]]; then
+    OUTPUT=$USER_NAME.conf
+fi
+
+set -x
+SECRETS=$(run-kubectl-ctx -n kube-system get secret -o template -o go-template='{{ range.items }}{{ .metadata.name }}{{"\n"}}{{end}}')
+if ! SECRET=$(grep "$USER_NAME" <<<"$SECRETS"); then
+    fatal "No bearer token for user $USER_NAME"
+fi
+
+TOKEN=$(run-kubectl-ctx -n kube-system get secret "$SECRET" -o jsonpath="{.data.token}")
+if [[ -z "$TOKEN" ]]; then
+    fatal "Token of user $USER_NAME is empty"
+fi
+TOKEN=$(base64 -d - <<<"$TOKEN")
+
+CURRENT_CONTEXT=$(kube-current-context)
+CURRENT_CLUSTER=$(run-kubectl-ctx config view -o jsonpath="{.contexts[?(@.name==\"$CURRENT_CONTEXT\")].context.cluster}")
+if [[ -z "$CURRENT_CLUSTER" ]]; then
+    fatal "Could not detect current cluster"
+fi
+CURRENT_SERVER=$(kubectl config view -o jsonpath="{.clusters[?(@.name == \"$CURRENT_CLUSTER\")].cluster.server}")
+if [[ -z "$CURRENT_SERVER" ]]; then
+    fatal "Could not detect current server"
+fi
+CA_FILE=$(mktemp /tmp/XXXXXXXXXX.ca.crt) || { fatal "Failed to create temp file"; }
+cleanup() {
+  rm -rf "$CA_FILE"
+}
+trap cleanup INT EXIT
+
+run-kubectl-ctx config view --raw -o jsonpath="{.clusters[?(@.name == \"$CURRENT_CLUSTER\")].cluster.certificate-authority-data}" | base64 -d > "$CA_FILE"
+
+KUBECONFIG="$OUTPUT" run-kubectl config set-cluster "$CURRENT_CLUSTER" --server="$CURRENT_SERVER" --certificate-authority "$CA_FILE" --embed-certs
+KUBECONFIG="$OUTPUT" run-kubectl config set-credentials "$USER_NAME" --token "$TOKEN"
+KUBECONFIG="$OUTPUT" run-kubectl config set-context "$CURRENT_CONTEXT" --cluster "$CURRENT_CLUSTER" --user "$USER_NAME" --namespace "default"
+KUBECONFIG="$OUTPUT" run-kubectl config use-context "$CURRENT_CONTEXT"
+
+echo "Kubernetes configuration file for user $USER_NAME written to $OUTPUT"
