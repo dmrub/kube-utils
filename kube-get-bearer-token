@@ -25,8 +25,10 @@ source "$THIS_DIR/kube-shlib.sh"
 
 define-kubectl-funcs
 
+USER_NAME=admin-user
+
 usage() {
-    echo "Get bearer token from kube-system:admin-user service account."
+    echo "Get bearer token from user service account."
     echo "Bearer token can be used to login into Kubernetes Dashboard"
     echo ""
     echo "$(basename "$0") [options]"
@@ -37,6 +39,7 @@ usage() {
     echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
     echo "  KUBECTL_OPTS               Additional options for kubectl"
     echo "options:"
+    echo "  -u, --user                 Name of the user service account in namespace kube-system (default: $USER_NAME)"
     echo "  -c, --context              The name of the kubeconfig context to use."
     echo "      --help                 Display this help and exit"
     echo "      --                     End of options"
@@ -50,6 +53,14 @@ while [[ $# -gt 0 ]]; do
         ;;
     --context=*)
         KUBE_CONTEXT="${1#*=}"
+        shift
+        ;;
+    -u | --user)
+        USER_NAME="$2"
+        shift 2
+        ;;
+    --user=*)
+        USER_NAME="${1#*=}"
         shift
         ;;
     --help)
@@ -68,9 +79,9 @@ while [[ $# -gt 0 ]]; do
         ;;
     esac
 done
-KUBE_USER=admin-user
+
 SECRETS=$(run-kubectl-ctx -n kube-system get secret -o template -o go-template='{{ range.items }}{{ .metadata.name }}{{"\n"}}{{end}}')
-if SECRET=$(grep "$KUBE_USER" <<<"$SECRETS"); then
+if SECRET=$(grep "$USER_NAME" <<<"$SECRETS"); then
     run-kubectl-ctx -n kube-system describe secret "$SECRET"
 else
     exit 1
