@@ -25,6 +25,19 @@ source "$THIS_DIR/kube-shlib.sh"
 
 define-kubectl-funcs
 
+case "$(uname)" in
+    MINGW*)
+		_ps() {
+			 ps -a | awk 'NR>1 { print $1, $2; }'
+		}
+		;;
+	*)
+		_ps() {
+			ps -o pid,ppid -ax
+		}
+		;;
+esac
+
 _get_children_pids() {
     local pid=$1
     local all_pids=$2
@@ -37,7 +50,7 @@ _get_children_pids() {
 
 get_children_pids() {
     local pid=$1 all_pids
-    all_pids=$(ps -o pid,ppid -ax)
+    all_pids=$(_ps)
     _get_children_pids "$pid" "$all_pids"
 }
 
