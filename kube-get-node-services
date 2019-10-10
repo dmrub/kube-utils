@@ -26,12 +26,14 @@ source "$THIS_DIR/kube-shlib.sh"
 
 define-kubectl-funcs
 
-if type -t column &>/dev/null; then
-    # shellcheck disable=SC2016
-    run-kubectl-ctx get svc --all-namespaces -o go-template='{{"NAMESPACE,SERVICE NAME,PORT NAME,NODEPORT\n"}}{{range .items}}{{$sname:=.metadata.name}}{{$sns:=.metadata.namespace}}{{range.spec.ports}}{{if .nodePort}}{{$sns}}{{","}}{{$sname}}{{","}}{{.name}}{{","}}{{.nodePort}}{{"\n"}}{{end}}{{end}}{{end}}' | column -t -s ','
-elif type -t awk &>/dev/null; then
+# shellcheck disable=SC2016
+TMPL='{{"NAMESPACE,SERVICE NAME,PORT NAME,NODEPORT\n"}}{{range .items}}{{$sname:=.metadata.name}}{{$sns:=.metadata.namespace}}{{range.spec.ports}}{{if .nodePort}}{{$sns}}{{","}}{{$sname}}{{","}}{{.name}}{{","}}{{.nodePort}}{{"\n"}}{{end}}{{end}}{{end}}'
+
+if command -v column &>/dev/null; then
+    run-kubectl-ctx get svc --all-namespaces -o go-template="$TMPL" | column -t -s ','
+elif command -v awk &>/dev/null; then
     run-kubectl-ctx get svc --all-namespaces -o=custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,NODEPORT:.spec.ports[*].nodePort,TYPE:.spec.type | awk 'NR == 1 || /NodePort/'
 else
-    # shellcheck disable=SC2016
-    run-kubectl-ctx get svc --all-namespaces -o go-template='{{"NAMESPACE\tSERVICE NAME\tPORT NAME\tNODEPORT\n"}}{{range .items}}{{$sname:=.metadata.name}}{{$sns:=.metadata.namespace}}{{range.spec.ports}}{{if .nodePort}}{{$sns}}{{"\t"}}{{$sname}}{{"\t"}}{{.name}}{{"\t"}}{{.nodePort}}{{"\n"}}{{end}}{{end}}{{end}}'
+    TMPL="${TMPL//,/\\t}"
+    run-kubectl-ctx get svc --all-namespaces -o go-template="$TMPL"
 fi
