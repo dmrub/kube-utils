@@ -157,6 +157,10 @@ options:
 
 ```
 
+## kube-get-gpu-pods
+
+Get list of Kubernetes pods that use GPUs, currently only NVIDIA GPUs are supported.
+
 ## kube-shlib.sh
 
 Bash shell Library with common functions used by all utilities.
