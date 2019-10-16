@@ -26,14 +26,67 @@ source "$THIS_DIR/kube-shlib.sh"
 
 define-kubectl-funcs
 
+KOPTS=()
+
+
+usage() {
+    echo "Get the list of Kubernetes services available on node ports,"
+    echo "similar to \`\$(minikube service)\`."
+    echo ""
+    echo "$(basename "$0") [options]"
+    echo ""
+    echo "environment variables:"
+    echo "  KUBECTL                    Name of the kubectl command to use"
+    echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
+    echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
+    echo "  KUBECTL_OPTS               Additional options for kubectl"
+    echo "options:"
+    echo "  -A, --all-namespaces       If present, list the requested object(s) across all namespaces."
+    echo "                             Namespace in current context is ignored even if specified with --namespace."
+    echo "  -c, --context              The name of the kubeconfig context to use."
+    echo "      --help                 Display this help and exit"
+    echo "      --                     End of options"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -c | --context)
+        KUBE_CONTEXT="$2"
+        shift 2
+        ;;
+    --context=*)
+        KUBE_CONTEXT="${1#*=}"
+        shift
+        ;;
+    -A | --all-namespaces)
+        KOPTS+=("$1")
+        shift
+        ;;
+    --help)
+        usage
+        exit
+        ;;
+    --)
+        shift
+        break
+        ;;
+    -*)
+        fatal "Unknown option $1"
+        ;;
+    *)
+        break
+        ;;
+    esac
+done
+
 # shellcheck disable=SC2016
 TMPL='{{"NAMESPACE,SERVICE NAME,PORT NAME,NODEPORT\n"}}{{range .items}}{{$sname:=.metadata.name}}{{$sns:=.metadata.namespace}}{{range.spec.ports}}{{if .nodePort}}{{$sns}}{{","}}{{$sname}}{{","}}{{.name}}{{","}}{{.nodePort}}{{"\n"}}{{end}}{{end}}{{end}}'
 
 if command -v column &>/dev/null; then
-    run-kubectl-ctx get svc --all-namespaces -o go-template="$TMPL" | column -t -s ','
+    run-kubectl-ctx get svc "${KOPTS[@]}" -o go-template="$TMPL" | column -t -s ','
 elif command -v awk &>/dev/null; then
-    run-kubectl-ctx get svc --all-namespaces -o=custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,NODEPORT:.spec.ports[*].nodePort,TYPE:.spec.type | awk 'NR == 1 || /NodePort/'
+    run-kubectl-ctx get svc "${KOPTS[@]}" -o=custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,NODEPORT:.spec.ports[*].nodePort,TYPE:.spec.type | awk 'NR == 1 || /NodePort/'
 else
     TMPL="${TMPL//,/\\t}"
-    run-kubectl-ctx get svc --all-namespaces -o go-template="$TMPL"
+    run-kubectl-ctx get svc "${KOPTS[@]}" -o go-template="$TMPL"
 fi

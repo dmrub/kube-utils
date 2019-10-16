@@ -15,7 +15,6 @@
 # limitations under the License.
 
 set -eo pipefail
-
 export LC_ALL=C
 unset CDPATH
 
@@ -26,12 +25,63 @@ source "$THIS_DIR/kube-shlib.sh"
 
 define-kubectl-funcs
 
+KOPTS=()
+
+usage() {
+    echo "Get the list of Kubernetes pods that use GPUs, currently only NVIDIA GPUs are supported."
+    echo ""
+    echo "$(basename "$0") [options]"
+    echo ""
+    echo "environment variables:"
+    echo "  KUBECTL                    Name of the kubectl command to use"
+    echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
+    echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
+    echo "  KUBECTL_OPTS               Additional options for kubectl"
+    echo "options:"
+    echo "  -A, --all-namespaces       If present, list the requested object(s) across all namespaces."
+    echo "                             Namespace in current context is ignored even if specified with --namespace."
+    echo "  -c, --context              The name of the kubeconfig context to use."
+    echo "      --help                 Display this help and exit"
+    echo "      --                     End of options"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -c | --context)
+        KUBE_CONTEXT="$2"
+        shift 2
+        ;;
+    --context=*)
+        KUBE_CONTEXT="${1#*=}"
+        shift
+        ;;
+    -A | --all-namespaces)
+        KOPTS+=("$1")
+        shift
+        ;;
+    --help)
+        usage
+        exit
+        ;;
+    --)
+        shift
+        break
+        ;;
+    -*)
+        fatal "Unknown option $1"
+        ;;
+    *)
+        break
+        ;;
+    esac
+done
+
 # shellcheck disable=SC2016
 TMPL='{{"NAMESPACE,POD NAME,USED NVIDIA GPUs\n"}}{{range .items}}{{if (eq .status.phase "Running")}}{{$pns:=.metadata.namespace}}{{$pname:=.metadata.name}}{{range .spec.containers}}{{ with .resources.requests }}{{$gpus:=(index . "nvidia.com/gpu")}}{{if $gpus}}{{$pns}}{{","}}{{$pname}}{{","}}{{$gpus}}{{"\n"}}{{end}}{{end}}{{end}}{{end}}{{end}}'
 
 if command -v column &>/dev/null; then
-    run-kubectl-ctx get pods --all-namespaces -o go-template --template "$TMPL" | column -t -s ','
+    run-kubectl-ctx get pods "${KOPTS[@]}" -o go-template --template "$TMPL" | column -t -s ','
 else
     TMPL="${TMPL//,/\\t}"
-    run-kubectl-ctx get pods --all-namespaces -o go-template --template "$TMPL"
+    run-kubectl-ctx get pods "${KOPTS[@]}" -o go-template --template "$TMPL"
 fi

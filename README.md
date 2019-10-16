@@ -159,7 +159,11 @@ options:
 
 ## kube-get-gpu-pods
 
-Get list of Kubernetes pods that use GPUs, currently only NVIDIA GPUs are supported.
+Get the list of Kubernetes pods that use GPUs, currently only NVIDIA GPUs are supported.
+
+## kube-get-gpu-nodes
+
+Get the list of Kubernetes nodes that contain and use GPUs, currently only NVIDIA GPUs are supported.
 
 ## kube-shlib.sh
 

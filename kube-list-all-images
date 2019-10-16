@@ -26,4 +26,56 @@ source "$THIS_DIR/kube-shlib.sh"
 
 define-kubectl-funcs
 
-run-kubectl get pods --all-namespaces --show-all -o jsonpath='{.items[*].status.containerStatuses[*].image}{"\n"}'
+KOPTS=()
+
+usage() {
+    echo "Get the list of all images running in pods in the Kubernetes cluster."
+    echo ""
+    echo "$(basename "$0") [options]"
+    echo ""
+    echo "environment variables:"
+    echo "  KUBECTL                    Name of the kubectl command to use"
+    echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
+    echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
+    echo "  KUBECTL_OPTS               Additional options for kubectl"
+    echo "options:"
+    echo "  -A, --all-namespaces       If present, list the requested object(s) across all namespaces."
+    echo "                             Namespace in current context is ignored even if specified with --namespace."
+    echo "  -c, --context              The name of the kubeconfig context to use."
+    echo "      --help                 Display this help and exit"
+    echo "      --                     End of options"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -c | --context)
+        KUBE_CONTEXT="$2"
+        shift 2
+        ;;
+    --context=*)
+        KUBE_CONTEXT="${1#*=}"
+        shift
+        ;;
+    -A | --all-namespaces)
+        KOPTS+=("$1")
+        shift
+        ;;
+    --help)
+        usage
+        exit
+        ;;
+    --)
+        shift
+        break
+        ;;
+    -*)
+        fatal "Unknown option $1"
+        ;;
+    *)
+        break
+        ;;
+    esac
+done
+
+run-kubectl-ctx get pods "${KOPTS[@]}" \
+    -o jsonpath='{.items[*].status.containerStatuses[*].image}{"\n"}'
