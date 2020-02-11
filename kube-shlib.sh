@@ -32,12 +32,12 @@ msg() {
 # Define kubectl-related functions
 define-kubectl-funcs() {
     case "$(uname)" in
-    MINGW* | CYGWIN*) KUBECTL_EXE=kubectl.exe ;;
-    *) KUBECTL_EXE=kubectl ;;
+        MINGW* | CYGWIN*) KUBECTL_EXE=kubectl.exe;;
+        *) KUBECTL_EXE=kubectl;;
     esac
 
     if [[ -n "$TEST_KUBECTL" ]]; then
-        KUBECTL=${TEST_KUBECTL} # substitute for tests
+        KUBECTL=${TEST_KUBECTL}   # substitute for tests
     elif [[ -n "$KUBECTL_BIN" ]]; then
         KUBECTL=${KUBECTL_BIN}
     elif [[ -z "$KUBECTL" ]]; then
@@ -50,7 +50,6 @@ define-kubectl-funcs() {
 
     if [[ ! -x "${KUBECTL}" ]]; then
         echo >&2 "ERROR: kubectl command (${KUBECTL}) not found or is not executable"
-        echo >&2 "Please run init-kubernetes.sh !"
         exit 1
     fi
     KUBECTL_OPTS=${KUBECTL_OPTS:-}
@@ -70,18 +69,26 @@ define-kubectl-funcs() {
     }
 
     kube-current-context() {
-        run-kubectl-ctx config view -o=jsonpath='{.current-context}'
+        run-kubectl-ctx config view --minify -o=jsonpath='{.current-context}'
     }
 
     kube-current-namespace() {
-        local cur_ctx ns
-        cur_ctx=$(kube-current-context)
-        ns=$(run-kubectl-ctx config view -o=jsonpath="{.contexts[?(@.name==\"${cur_ctx}\")].context.namespace}")
+        local ns
+        # local cur_ctx ns
+        #cur_ctx=$(kube-current-context)
+        #ns=$(run-kubectl-ctx config view -o=jsonpath="{.contexts[?(@.name==\"${cur_ctx}\")].context.namespace}")
+        ns=$(run-kubectl-ctx config view --minify --output 'jsonpath={..namespace}')
         if [[ -z "${ns}" ]]; then
             echo "default"
         else
             echo "${ns}"
         fi
+    }
+
+    kube-set-namespace() {
+        local ctx
+        ctx=$(kube-current-context)
+        run-kubectl-ctx config set-context "${ctx}" --namespace="${1}"
     }
 }
 
@@ -95,67 +102,67 @@ define-kubectl-funcs() {
 # unixpath     : convert native (Windows) path to Unix path
 define-path-funcs() {
     case "$(uname)" in
-    CYGWIN*)
-        SED_NOCR_OPT=--binary
-        natpath() {
-            if [[ -z "$1" ]]; then
-                echo "$*"
-            else
-                cygpath -w "$*"
-            fi
-        }
-        unixpath() {
-            if [[ -z "$1" ]]; then
-                echo "$*"
-            else
-                cygpath -u "$*"
-            fi
-        }
-        NAT_PATHSEP=";"
-        NAT_SEP="\\"
-        ;;
-    MINGW*)
-        # check option to disable conversion of line endings to Unix
-        if echo 'X' | sed --nocr 's|X|Y|' &>/dev/null; then
-            SED_NOCR_OPT=--nocr
-        else
+        CYGWIN*)
             SED_NOCR_OPT=--binary
-        fi
-        natpath() {
-            if [[ -z "$1" ]]; then
-                echo "$*"
-            else
-                if [[ -f "$1" ]]; then
-                    local dir fn
-                    dir=$(dirname "$1")
-                    fn=$(basename "$1")
-                    echo "$(cd "$dir"; echo "$(pwd -W)/$fn")" | sed 's|/|\\|g';
+            natpath() {
+                if [[ -z "$1" ]]; then
+                    echo "$*"
                 else
-                    if [[ -d "$1" ]]; then
-                        echo "$(cd "$1" && pwd -W)" | sed 's|/|\\|g'
+                    cygpath -w "$*"
+                fi
+            }
+            unixpath() {
+                if [[ -z "$1" ]]; then
+                    echo "$*"
+                else
+                    cygpath -u "$*"
+                fi
+            }
+            NAT_PATHSEP=";"
+            NAT_SEP="\\"
+            ;;
+        MINGW*)
+            # check option to disable conversion of line endings to Unix
+            if echo 'X' | sed --nocr 's|X|Y|' &>/dev/null; then
+                SED_NOCR_OPT=--nocr
+            else
+                SED_NOCR_OPT=--binary
+            fi
+            natpath() {
+                if [[ -z "$1" ]]; then
+                    echo "$*"
+                else
+                    if [[ -f "$1" ]]; then
+                        local dir fn
+                        dir=$(dirname "$1")
+                        fn=$(basename "$1")
+                        echo "$(cd "$dir"; echo "$(pwd -W)/$fn")" | sed 's|/|\\|g';
                     else
-                        echo "$1" | sed 's|^/\(.\)/|\1:\\|g; s|/|\\|g'
+                        if [[ -d "$1" ]]; then
+                            echo "$(cd "$1" && pwd -W)" | sed 's|/|\\|g'
+                        else
+                            echo "$1" | sed 's|^/\(.\)/|\1:\\|g; s|/|\\|g'
+                        fi
                     fi
                 fi
-            fi
-        }
-        unixpath() {
-            if [[ -z "$1" ]]; then
-                echo "$*"
-            else
-                echo "$1" | sed -e 's|^\(.\):|/\1|g' -e 's|\\|/|g'
-            fi
-        }
-        NAT_PATHSEP=";"
-        NAT_SEP="\\"
-        ;;
-    *)
-        natpath() { echo "$*"; }
-        unixpath() { echo "$*"; }
-        SED_NOCR_OPT=
-        NAT_PATHSEP=":"
-        NAT_SEP="/"
-        ;;
+            }
+            unixpath() {
+                if [[ -z "$1" ]]; then
+                    echo "$*"
+                else
+                    echo "$1" | sed -e 's|^\(.\):|/\1|g' -e 's|\\|/|g'
+                fi
+            }
+            NAT_PATHSEP=";"
+            NAT_SEP="\\"
+            ;;
+        *)
+            natpath() { echo "$*"; }
+            unixpath() { echo "$*"; }
+            SED_NOCR_OPT=
+            NAT_PATHSEP=":"
+            NAT_SEP="/"
+            ;;
     esac
 }
 
@@ -172,8 +179,8 @@ wait-for-pod() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-        --help)
-            cat <<EOF
+            --help)
+                cat <<EOF
 $0 [options] pod_name_prefix
 
 Wait until Kubernetes pod runs with the name starting with pod_name_prefix.
@@ -184,39 +191,39 @@ Wait until Kubernetes pod runs with the name starting with pod_name_prefix.
      --delay      SECONDS    Delay in seconds between checks (default: $delay)
      --debug                 Enable debug output
 EOF
-            return 0
-            ;;
-        -n | --namespace)
-            pod_ns="$2"
-            shift 2
-            ;;
-        --trials)
-            num_trials="$2"
-            shift 2
-            ;;
-        --run-checks)
-            num_run_checks="$2"
-            shift 2
-            ;;
-        --delay)
-            delay="$2"
-            shift 2
-            ;;
-        --debug)
-            debug_flag=true
-            shift
-            ;;
-        --)
-            shift
-            break
-            ;;
-        -*)
-            echo >&2 "$0: error: unknown option $1"
-            return 1
-            ;;
-        *)
-            break
-            ;;
+                return 0
+                ;;
+            -n|--namespace)
+                pod_ns="$2"
+                shift 2
+                ;;
+            --trials)
+                num_trials="$2"
+                shift 2
+                ;;
+            --run-checks)
+                num_run_checks="$2"
+                shift 2
+                ;;
+            --delay)
+                delay="$2"
+                shift 2
+                ;;
+            --debug)
+                debug_flag=true
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -*)
+                echo >&2 "$0: error: unknown option $1"
+                return 1
+                ;;
+            *)
+                break
+                ;;
         esac
     done
 
@@ -237,7 +244,7 @@ EOF
     while ! $running; do
         [ "$debug_flag" = "true" ] && msg "[wait-for-pod] Waiting for '$pod_name_prefix' pod ..."
 
-        if ! pod_names=($(run-kubectl-ctx get pods "${ns_opt[@]}" -o go-template='{{range.items}} {{ .metadata.name }} {{ .metadata.namespace }}{{end}}')); then
+        if ! pod_names=( $(run-kubectl-ctx get pods "${ns_opt[@]}" -o go-template='{{range.items}} {{ .metadata.name }} {{ .metadata.namespace }}{{end}}') ); then
             return 1
         fi
 
@@ -259,23 +266,23 @@ EOF
                     if phase=$(run-kubectl-ctx get pod --namespace="$pod_ns" "$pod_name" -o go-template='{{ .status.phase }}'); then
                         [ "$debug_flag" = "true" ] && msg "[wait-for-pod] Pod $pod_name in phase $phase [$((check + 1))/$num_run_checks]"
                         case "$phase" in
-                        Running)
-                            running=true
-                            ((check++)) || true
-                            if [[ $check -ge $num_run_checks ]]; then
+                            Running)
+                                running=true
+                                (( check++ )) || true
+                                if [[ $check -ge $num_run_checks ]]; then
+                                    break
+                                fi
+                                ;;
+                            Failed | Error)
+                                running=false
+                                check=0
+                                run-kubectl-ctx delete pod --namespace="$pod_ns" "$pod_name"
                                 break
-                            fi
-                            ;;
-                        Failed | Error)
-                            running=false
-                            check=0
-                            run-kubectl-ctx delete pod --namespace="$pod_ns" "$pod_name"
-                            break
-                            ;;
-                        *)
-                            running=false
-                            check=0
-                            ;;
+                                ;;
+                            *)
+                                running=false
+                                check=0
+                                ;;
                         esac
                     else
                         running=false
@@ -292,7 +299,7 @@ EOF
             fi
         done
         if [[ $num_trials -gt 0 ]]; then
-            ((trial++)) || true
+            (( trial++ )) || true
             if [[ $trial -ge $num_trials ]]; then
                 break
             fi
