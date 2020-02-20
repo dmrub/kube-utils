@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright 2019 Dmitri Rubinstein
+# Copyright 2019, 2020 Dmitri Rubinstein
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -97,6 +97,7 @@ fi
 
 POD_NAMESPACE=$(kube-current-namespace)
 POD_NAME=docker-gateway
+HOST_NAME=
 
 usage() {
     echo "Connect to the docker daemon running in the Kubernetes cluster."
@@ -115,6 +116,8 @@ usage() {
     echo "options:"
     echo "  -n, --namespace=''         Namespace of the connector pod (default: $POD_NAMESPACE)"
     echo "  -p, --pod=''               Name of the connector pod (default: $POD_NAME)"
+    echo "  -h, --host=''              Run pod on a specific host"
+    echo "                             Note: In this case, the host name is appended to the Pod name."
     echo "      --context=''           The name of the kubeconfig context to use."
     echo "                             Has precedence over KUBE_CONTEXT variable."
     echo "      --help                 Display this help and exit"
@@ -135,16 +138,24 @@ while [[ $# -gt 0 ]]; do
         POD_NAME="$2"
         shift 2
         ;;
+    --pod=*)
+        POD_NAME="${1#*=}"
+        shift
+        ;;
+    -h | --host)
+        HOST_NAME="$2"
+        shift 2
+        ;;
+    --host=*)
+        HOST_NAME="${1#*=}"
+        shift
+        ;;
     -n | --namespace)
         POD_NAMESPACE="$2"
         shift 2
         ;;
     --namespace=*)
         POD_NAMESPACE="${1#*=}"
-        shift
-        ;;
-    --pod=*)
-        POD_NAME="${1#*=}"
         shift
         ;;
     --help)
@@ -163,6 +174,10 @@ while [[ $# -gt 0 ]]; do
         ;;
     esac
 done
+
+if [[ -n "$HOST_NAME" ]]; then
+    POD_NAME=${POD_NAME}-${HOST_NAME}
+fi
 
 while true; do
     if ! PHASE=$(run-kubectl-ctx get pod --namespace="$POD_NAMESPACE" "$POD_NAME" -o template --template '{{ .status.phase }}' 2>/dev/null) ||
@@ -189,6 +204,8 @@ spec:
     ports:
     - name: docker
       containerPort: 2375
+  ${HOST_NAME:+nodeSelector:}
+  ${HOST_NAME:+  kubernetes.io/hostname: "${HOST_NAME}"}
   volumes:
   - name: docker-sock
     hostPath:
@@ -209,7 +226,7 @@ done
 
 LOCAL_PORT=""
 pid=""
-CFG_DIR=~/".kube-docker-env-$(kube-current-context)"
+CFG_DIR=~/".kube-docker-env-$(kube-current-context)${HOST_NAME:+-on-${HOST_NAME}}"
 if [[ -d "$CFG_DIR" && -e "$CFG_DIR/docker-port" && -e "$CFG_DIR/pid" ]]; then
     LOCAL_PORT=$(<"$CFG_DIR/docker-port")
     pid=$(<"$CFG_DIR/pid")
@@ -230,6 +247,12 @@ if [[ -z "$LOCAL_PORT" || -z "$pid" ]]; then
     echo "$pid" >"$CFG_DIR/pid"
 fi
 
+if [[ -n "$HOST_NAME" ]]; then
+    printf -v EVAL_CMD "eval \"\$(%s --host=%q)\"" "$0" "$HOST_NAME"
+else
+    printf -v EVAL_CMD "eval \"\$(%s)\"" "$0"
+fi
+
 cat <<EOF
 export DOCKER_HOST=tcp://127.0.0.1:$LOCAL_PORT;
 unset DOCKER_TLS_VERIFY
@@ -242,7 +265,7 @@ kube-stop-docker() {
 };
 
 # Run this command to configure your shell:
-# eval "\$($0)"
+# $EVAL_CMD
 # Stop port forwarding by running:
 # kube-stop-docker
 EOF

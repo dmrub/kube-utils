@@ -40,6 +40,8 @@ environment variables:
 options:
   -n, --namespace=''         Namespace of the connector pod (default: kubeflow)
   -p, --pod=''               Name of the connector pod (default: docker-gateway)
+  -h, --host=''              Run pod on a specific host
+                             Note: In this case, the host name is appended to the Pod name.
       --context=''           The name of the kubeconfig context to use.
                              Has precedence over KUBE_CONTEXT variable.
       --help                 Display this help and exit
