@@ -25,6 +25,16 @@ source "$THIS_DIR/kube-shlib.sh"
 
 define-kubectl-funcs
 
+# Detect python excutable
+PY=python # default fallback
+for _PY in python python3 python2; do
+    if command -v "$_PY" >/dev/null 2>&1; then
+      PY=$(command -v "$_PY")
+      break
+    fi
+done
+unset _PY
+
 case "$(uname)" in
     MINGW*)
 		_ps() {
@@ -212,7 +222,7 @@ fi
 
 if [[ -z "$LOCAL_PORT" || -z "$pid" ]]; then
     mkdir -p "$CFG_DIR"
-    LOCAL_PORT=$(python -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+    LOCAL_PORT=$("$PY" -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
     # run-kubectl-ctx port-forward "$POD_NAME" $LOCAL_PORT:2375 >&2 &
     "$0" --port-forward "$CFG_DIR" "$POD_NAME" "$POD_NAMESPACE" "$LOCAL_PORT" >&2 &
     pid=$!
