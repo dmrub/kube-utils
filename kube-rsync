@@ -55,7 +55,7 @@ if [[ "$1" == "--as-rsh" ]]; then
         exec \
         ${POD_NAMESPACE:+--namespace=${POD_NAMESPACE}} \
         ${POD_CONTAINER:+--container=${POD_CONTAINER}} \
-        "${POD_NAME}" -i -- "$@"
+        "${POD_NAME}" -i -- /bin/sh -c "eval \"\$@\"" sh "$@"
 fi
 
 usage() {
