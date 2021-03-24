@@ -29,34 +29,80 @@ msg() {
     echo >&2 "$*"
 }
 
+is-true() {
+    case "$1" in
+        true | yes | 1) return 0 ;;
+    esac
+    return 1
+}
+
+is-array() {
+    declare -p "$1" &>/dev/null && [[ "$(declare -p "$1")" =~ "declare -a" ]]
+}
+
 # Define kubectl-related functions
 define-kubectl-funcs() {
     case "$(uname)" in
-        MINGW* | CYGWIN*) KUBECTL_EXE=kubectl.exe;;
-        *) KUBECTL_EXE=kubectl;;
+        MINGW* | CYGWIN*)
+           KUBECTL_EXE=kubectl.exe
+           OC_EXE=oc.exe
+           ;;
+        *)
+           # shellcheck disable=2034
+           KUBECTL_EXE=kubectl
+           # shellcheck disable=2034
+           OC_EXE=oc
+           ;;
     esac
 
-    if [[ -n "$TEST_KUBECTL" ]]; then
+    if [[ -n "${TEST_KUBECTL:-}" ]]; then
         KUBECTL=${TEST_KUBECTL}   # substitute for tests
-    elif [[ -n "$KUBECTL_BIN" ]]; then
+    elif [[ -n "${KUBECTL_BIN:-}" ]]; then
         KUBECTL=${KUBECTL_BIN}
-    elif [[ -z "$KUBECTL" ]]; then
-        KUBECTL=$(type -p kubectl)
+    elif [[ -z "${KUBECTL:-}" ]]; then
+        KUBECTL=$(command -v kubectl || true)
+        if [[ -z "${KUBECTL:-}" ]]; then
+            KUBECTL=$(command -v oc || true)
+        fi
     fi
 
-    if [[ ! -x "${KUBECTL}" ]]; then
-        KUBECTL=$(type -p "${KUBECTL}")
+    if [[ ! -x "${KUBECTL:-}" ]]; then
+        KUBECTL=$(command -v "${KUBECTL:-}" || true)
     fi
 
-    if [[ ! -x "${KUBECTL}" ]]; then
-        echo >&2 "ERROR: kubectl command (${KUBECTL}) not found or is not executable"
-        exit 1
+    if [[ ! -x "${KUBECTL:-}" ]]; then
+        if [[ -n "${KUBECTL:-}" ]]; then
+            fatal "kubectl command ${KUBECTL} not found or is not executable"
+        else
+            fatal "kubectl command is not found"
+        fi
     fi
+
+    # check if kubectl is OpenShift client
+
+    # disabling pipefail required because grep will stop after first match
+    # https://stackoverflow.com/questions/19120263/why-exit-code-141-with-grep-q
+    set +o pipefail
+    if "${KUBECTL}" --help 2>&1 | grep -qi openshift; then
+        OPENSHIFT_CLIENT=true
+        OC=$KUBECTL
+    else
+        # shellcheck disable=SC2034
+        OPENSHIFT_CLIENT=
+        OC=
+    fi
+    set -o pipefail
+
     KUBECTL_OPTS=${KUBECTL_OPTS:-}
 
     run-kubectl() {
         # shellcheck disable=2086
         "${KUBECTL}" ${KUBECTL_OPTS} "$@"
+    }
+
+    run-oc() {
+        # shellcheck disable=2086
+        "${OC}" ${KUBECTL_OPTS} "$@"
     }
 
     # Run kubernetes with configured context
@@ -66,6 +112,15 @@ define-kubectl-funcs() {
             opts+=(--context "$KUBE_CONTEXT")
         fi
         run-kubectl "${opts[@]}" "$@"
+    }
+
+    # Run kubernetes with configured context
+    run-oc-ctx() {
+        local opts=()
+        if [[ -n "$KUBE_CONTEXT" ]]; then
+            opts+=(--context "$KUBE_CONTEXT")
+        fi
+        run-oc "${opts[@]}" "$@"
     }
 
     kube-current-context() {
@@ -85,10 +140,31 @@ define-kubectl-funcs() {
         fi
     }
 
+    kube-current-server() {
+        run-kubectl-ctx config view --minify -o=jsonpath='{..server}'
+    }
+
     kube-set-namespace() {
         local ctx
         ctx=$(kube-current-context)
         run-kubectl-ctx config set-context "${ctx}" --namespace="${1}"
+    }
+
+    kube-server-version() {
+        local server_version major minor patch
+        server_version=$(run-kubectl-ctx --match-server-version=false version | grep "Server Version:")
+        echo "${server_version}" | \
+                sed -E "s/.*GitVersion:\"(v([0-9]+)\.([0-9]+)\.([0-9]+)).*/\1/"
+    }
+
+    # kubectl version | grep "Server Version:"  | sed -E "s/.*GitVersion:\"v([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/"
+    kube-server-version-as-int() {
+        local server_version major minor patch
+        server_version=$(run-kubectl-ctx --match-server-version=false | grep "Server Version:")
+        read -r major minor patch < <(
+                echo "${server_version}" | \
+                sed -E "s/.*GitVersion:\"v([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/")
+        printf "%02d%02d%02d" "${major}" "${minor}" "${patch}" | sed 's/^0*//'
     }
 }
 
@@ -159,12 +235,56 @@ define-path-funcs() {
         *)
             natpath() { echo "$*"; }
             unixpath() { echo "$*"; }
+            # shellcheck disable=2034
             SED_NOCR_OPT=
+            # shellcheck disable=2034
             NAT_PATHSEP=":"
+            # shellcheck disable=2034
             NAT_SEP="/"
             ;;
     esac
 }
+
+
+# https://www.linuxjournal.com/content/normalizing-path-names-bash
+
+normpath() {
+    # Remove all /./ sequences.
+    local path=${1//\/.\//\/}
+
+    # Remove dir/.. sequences.
+    while [[ $path =~ ([^/][^/]*/\.\./) ]]; do
+        path=${path/${BASH_REMATCH[0]}/}
+    done
+    echo "$path"
+}
+
+if test -x /usr/bin/realpath; then
+    abspath() {
+        if [[ -d "$1" || -d "$(dirname "$1")" ]]; then
+            /usr/bin/realpath "$1"
+        else
+            case "$1" in
+                "" | ".") echo "$PWD";;
+                /*) normpath "$1";;
+                *)  normpath "$PWD/$1";;
+            esac
+        fi
+    }
+else
+    abspath() {
+        if [[ -d "$1" ]]; then
+            (cd "$1" || exit 1; pwd)
+        else
+            case "$1" in
+                "" | ".") echo "$PWD";;
+                /*) normpath "$1";;
+                *)  normpath "$PWD/$1";;
+            esac
+        fi
+    }
+fi
+
 
 # [options] pod_name_prefix
 # options ::=
