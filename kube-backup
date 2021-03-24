@@ -142,8 +142,11 @@ if [ -n "$(ls -A "$DEST_DIR" 2>/dev/null)" ]; then
     exit 1
 fi
 
+DEFAULT_RESOURCETYPES=$(run-kubectl-ctx api-resources --namespaced=true -o name)
+DEFAULT_GLOBALRESOURCES=$(run-kubectl-ctx api-resources --namespaced=false -o name)
+
 if [[ -z "$NAMESPACES" ]]; then
-    NAMESPACES=$(run-kubectl-ctx get ns -o jsonpath={.items[*].metadata.name})
+    NAMESPACES=$(run-kubectl-ctx get ns -o 'jsonpath={.items[*].metadata.name}')
 fi
 if [[ -z "$RESOURCETYPES" ]]; then
     RESOURCETYPES=$DEFAULT_RESOURCETYPES
