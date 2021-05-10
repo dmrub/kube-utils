@@ -275,9 +275,9 @@ def main():
                     'containers': [
                         {
                             'name': node_pod_container_name,
-                            # "securityContext": {
-                            #    "privileged": True
-                            # },
+                            "securityContext": {
+                               "privileged": True
+                            },
                             'image': node_pod_image,
                             "command": ["/bin/sh"],
                             "args": [
@@ -328,6 +328,9 @@ def main():
                 pid_ns_to_container_map = {}
                 for line in stdout.splitlines(keepends=False):
                     proc_path, pid_ns, nspid, cmdline = line.split('\t')
+                    if not pid_ns:
+                        LOG.warning('Pod %s namespace %s on node %s: Missing pid_ns in line: %s',
+                                    node_pod_name, node_pod_namespace, gpu_node, line)
                     if not proc_path.startswith('/proc/'):
                         LOG.error('Unexpected command result, string should start with "/proc/": %s', proc_path)
                         continue
