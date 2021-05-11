@@ -38,13 +38,18 @@ GPU_CHECK_PROC_PREFIX = 'X-GPUPROC'
 
 
 @dataclass
+class GpuInfo:
+    name: str
+    used_memory: str
+    pci_address: str
+
+
+@dataclass
 class ContainerProcess:
     pid: int
     cmdline: str
     host_pid: Optional[int] = None
-    gpu_name: Optional[str] = None
-    gpu_used_memory: Optional[str] = None
-    gpu_pci_address: Optional[str] = None
+    gpu_infos: List[GpuInfo] = field(default_factory=list)
 
 
 @dataclass
@@ -276,7 +281,7 @@ def main():
                         {
                             'name': node_pod_container_name,
                             "securityContext": {
-                               "privileged": True
+                                "privileged": True
                             },
                             'image': node_pod_image,
                             "command": ["/bin/sh"],
@@ -385,12 +390,12 @@ def main():
                 for gpu_container in gpu_containers:
                     for gpu_usage in gpu_container.gpu_usage_list:
                         gpu_name, pci_address, host_pid, proc_name, used_gpu_memory = gpu_usage
+                        gpu_info = GpuInfo(gpu_name, used_gpu_memory, pci_address)
                         host_pid = int(host_pid)
                         for container_process in gpu_container.processes:
                             if container_process.host_pid == host_pid:
-                                container_process.gpu_name = gpu_name
-                                container_process.gpu_pci_address = pci_address
-                                container_process.gpu_used_memory = used_gpu_memory
+                                if gpu_info not in container_process.gpu_infos:
+                                    container_process.gpu_infos.append(gpu_info)
 
             else:
                 LOG.error('Could not get process informations from pod %s container %s, namespace %s on node %s',
@@ -417,10 +422,11 @@ def main():
     table = [header]
     for gpu_container in gpu_containers:
         for process in gpu_container.processes:
-            if process.gpu_used_memory is not None:
-                table.append((gpu_container.node_name, gpu_container.pod_name, gpu_container.pod_namespace,
-                              process.host_pid, process.pid, process.gpu_name, process.gpu_pci_address,
-                              process.gpu_used_memory, process.cmdline))
+            for gpu_info in process.gpu_infos:
+                if gpu_info.used_memory is not None:
+                    table.append((gpu_container.node_name, gpu_container.pod_name, gpu_container.pod_namespace,
+                                  process.host_pid, process.pid, gpu_info.name, gpu_info.pci_address,
+                                  gpu_info.used_memory, process.cmdline))
 
     print_table(table)
 
