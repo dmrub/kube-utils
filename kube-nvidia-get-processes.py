@@ -42,6 +42,11 @@ class GpuInfo:
     name: str
     used_memory: str
     pci_address: str
+    index: Optional[int] = None
+    uuid: Optional[str] = None
+    serial: Optional[str] = None
+    temperature: Optional[str] = None
+    utilization: Optional[str] = None
 
 
 @dataclass
@@ -179,7 +184,7 @@ def main():
 
     exec_processes = {}
 
-    print('Search for pods that use GPU...')
+    print('Search for pods that use GPU...', file=sys.stderr)
 
     try:
         for pod in pod_list.items:
@@ -195,20 +200,58 @@ def main():
                 LOG.info('Checking pod %s with container %s in namespace %s on node %s for GPU usage',
                          pod_name, container.name, pod_namespace, pod_node_name)
 
-                command = 'nvidia-smi --query-compute-apps=gpu_name,gpu_bus_id,pid,process_name,used_memory ' \
-                          '--format=csv,noheader'
+                table_separator = '===='
+                command = 'sh -c \'' \
+                          'nvidia-smi --query-compute-apps=gpu_name,gpu_bus_id,pid,process_name,used_memory ' \
+                          '--format=csv,noheader ' \
+                          ' && echo "{}" && ' \
+                          'nvidia-smi --query-gpu=index,uuid,serial,pci.bus_id,temperature.gpu,utilization.gpu ' \
+                          '--format=csv,noheader ' \
+                          '\''.format(table_separator)
 
                 try:
                     stdout, stderr, rc = k8s_exec(api, pod_name, pod_namespace, command, container.name)
                     # print('stdout = {}, stderr = {}, rc = {}'.format(stdout, stderr, rc))
                     if rc == 0:
+                        if table_separator not in stdout:
+                            LOG.error('Unexpected command result, stdout should container separator "{}": %s'
+                                      .format(table_separator),
+                                      stdout)
+                            continue
+
                         print(
-                            'Pod {} in namespace {} on node {} uses GPU'.format(pod_name, pod_namespace, pod_node_name))
-                        f = StringIO(stdout)
+                            'Pod {} in namespace {} on node {} uses GPU'.format(pod_name, pod_namespace, pod_node_name),
+                            file=sys.stderr)
+
+                        nvidia_smi_output = stdout.split(table_separator)
+                        if len(nvidia_smi_output) != 2:
+                            LOG.error('Unexpected command result, stdout should contain two CSV tables: %s',
+                                      stdout)
+                            continue
+
+                        f = StringIO(nvidia_smi_output[1].lstrip())
                         reader = csv.reader(f, delimiter=',')
-                        rows = []
+                        gpu_info_map = {}
                         for row in reader:
-                            rows.append([s.strip() for s in row])
+                            gpu_index, gpu_uuid, gpu_serial, pci_address, temperature, utilization = [s.strip() for s in
+                                                                                                      row]
+                            gpu_info_map[pci_address] = (
+                            gpu_index, gpu_uuid, gpu_serial, pci_address, temperature, utilization)
+
+                        f = StringIO(nvidia_smi_output[0])
+                        reader = csv.reader(f, delimiter=',')
+                        gpu_usage_list = []
+                        for row in reader:
+                            gpu_name, pci_address, host_pid, proc_name, used_gpu_memory = [s.strip() for s in row]
+                            gpu_index = gpu_uuid = gpu_serial = temperature = utilization = None
+                            gpu_info = gpu_info_map.get(pci_address)
+                            if gpu_info is not None:
+                                gpu_index, gpu_uuid, gpu_serial, pci_address, temperature, utilization = gpu_info
+                            if gpu_index is not None:
+                                gpu_index = int(gpu_index)
+
+                            gpu_usage_list.append((gpu_name, pci_address, int(host_pid), proc_name, used_gpu_memory,
+                                                   gpu_index, gpu_uuid, gpu_serial, temperature, utilization))
 
                         command = 'sh -c \'for p in /proc/*; do if [ -e "$p/cmdline" ]; then ' \
                                   'printf "%s\\t%s\\n" "$p" "$(tr \\\\0 " " < "$p/cmdline")"; fi; done\' '
@@ -235,7 +278,7 @@ def main():
                                                          pod_namespace=pod_namespace,
                                                          node_name=pod_node_name,
                                                          container_name=container.name,
-                                                         gpu_usage_list=rows,
+                                                         gpu_usage_list=gpu_usage_list,
                                                          processes=container_processes)
                             gpu_containers.append(gpu_container)
                             gpu_node_to_containers_map[pod_node_name].append(gpu_container)
@@ -261,7 +304,7 @@ def main():
                                   pod_name, container.name, pod_namespace)
 
         for gpu_node in gpu_node_to_containers_map.keys():
-            print('Checking GPU node {} ...'.format(gpu_node))
+            print('Checking GPU node {} ...'.format(gpu_node), file=sys.stderr)
             node_pod_name = 'x-gpuproc-{}-{}'.format(
                 randstr(chars=string.ascii_lowercase + string.digits), gpu_node)
             node_pod_namespace = 'default'
@@ -389,9 +432,11 @@ def main():
                 # Post process gpu containers
                 for gpu_container in gpu_containers:
                     for gpu_usage in gpu_container.gpu_usage_list:
-                        gpu_name, pci_address, host_pid, proc_name, used_gpu_memory = gpu_usage
-                        gpu_info = GpuInfo(gpu_name, used_gpu_memory, pci_address)
-                        host_pid = int(host_pid)
+                        (gpu_name, pci_address, host_pid, proc_name, used_gpu_memory,
+                         gpu_index, gpu_uuid, gpu_serial, temperature, utilization) = gpu_usage
+                        gpu_info = GpuInfo(gpu_name, used_gpu_memory, pci_address,
+                                           gpu_index, gpu_uuid, gpu_serial,
+                                           temperature, utilization)
                         for container_process in gpu_container.processes:
                             if container_process.host_pid == host_pid:
                                 if gpu_info not in container_process.gpu_infos:
@@ -403,7 +448,7 @@ def main():
 
             resp = api.delete_namespaced_pod(node_pod_name, node_pod_namespace)
     finally:
-        print('Cleanup...')
+        print('Cleanup...', file=sys.stderr)
         # Stop all processes
         for key, resp in exec_processes.items():
             # End process by providing input for the read command
@@ -418,14 +463,15 @@ def main():
     # pp.pprint(gpu_node_to_containers_map)
 
     # Collect information into table and print
-    header = ("NODE", "POD", "NAMESPACE", "NODE_PID", "PID", "GPU", "PCI_ADDRESS", "GPU_MEMORY", "CMDLINE")
+    header = ("NODE", "POD", "NAMESPACE", "NODE_PID", "PID", "GPU", "GPU_NAME", "PCI_ADDRESS", "GPU_MEMORY", "CMDLINE")
     table = [header]
     for gpu_container in gpu_containers:
         for process in gpu_container.processes:
             for gpu_info in process.gpu_infos:
                 if gpu_info.used_memory is not None:
                     table.append((gpu_container.node_name, gpu_container.pod_name, gpu_container.pod_namespace,
-                                  process.host_pid, process.pid, gpu_info.name, gpu_info.pci_address,
+                                  process.host_pid, process.pid, gpu_info.index,
+                                  gpu_info.name, gpu_info.pci_address,
                                   gpu_info.used_memory, process.cmdline))
 
     print_table(table)
