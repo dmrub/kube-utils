@@ -167,6 +167,24 @@ Get the list of Kubernetes pods that use GPUs, currently only NVIDIA GPUs are su
 
 Get the list of Kubernetes nodes that contain and use GPUs, currently only NVIDIA GPUs are supported.
 
+## kube-nvidia-get-processes.py
+
+Get the list of Kubernetes pods that use NVIDIA GPUs
+
+```
+usage: kube-nvidia-get-processes.py [-h] [-l LOGLEVEL] [--kubeconfig KUBECONFIG] [--context CONTEXT]
+
+Get pod processes that use NVIDIA GPU
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -l LOGLEVEL, --log LOGLEVEL
+                        log level (use one of CRITICAL,ERROR,WARNING,INFO,DEBUG) (default: WARNING)
+  --kubeconfig KUBECONFIG
+                        Path to the kubeconfig file to use for CLI requests. (default: None)
+  --context CONTEXT     The name of the kubeconfig context to use (default: None)
+```
+
 ## kube-shlib.sh
 
 Bash shell Library with common functions used by all utilities.
