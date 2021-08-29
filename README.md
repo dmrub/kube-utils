@@ -190,7 +190,7 @@ optional arguments:
 Get all persistent volumes and the persistent volume claims referenced to them.
 
 ```
-usage: kube-get-pv-pvc.py [-h] [-l LOGLEVEL] [--kubeconfig KUBECONFIG] [--context CONTEXT] [-H] [-o {table,yaml,json}] [-s] [-f] [-v VOLUME_TYPE]
+usage: kube-get-pv-pvc.py [-h] [-l LOGLEVEL] [--kubeconfig KUBECONFIG] [--context CONTEXT] [-H] [-o {pvc-table,usage-table,yaml,json}] [-s] [-f] [-v VOLUME_TYPE]
 
 Get PersistentVolumes and corresponding PersistentVolumeClaims
 
@@ -202,8 +202,8 @@ optional arguments:
                         Path to the kubeconfig file to use for CLI requests. (default: None)
   --context CONTEXT     The name of the kubeconfig context to use (default: None)
   -H, --no-headers      Don't print headers (default: False)
-  -o {table,yaml,json}, --output {table,yaml,json}
-                        Output PV / PVC in YAML format (default: table)
+  -o {pvc-table,usage-table,yaml,json}, --output {pvc-table,usage-table,yaml,json}
+                        Output format of PV / PVC information (default: usage-table)
   -s, --separate-pvc    Output separately PV and PVC files (default: False)
   -f, --output-to-files
                         Output PV / PVC to files (default: False)

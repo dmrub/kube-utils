@@ -18,6 +18,10 @@ from openshift.dynamic import DynamicClient
 LOG = logging.getLogger(__name__)
 
 
+def k8s_full_name(name: str, namespace: str) -> str:
+    return "{}/{}".format(name, namespace)
+
+
 @dataclass
 class PVPVCInfo:
     pv: object
@@ -38,6 +42,14 @@ class PVPVCInfo:
     @property
     def pvc_namespace(self) -> Optional[str]:
         return self.pvc.metadata.namespace if self.pvc is not None else None
+
+    @property
+    def pvc_full_name(self) -> Optional[str]:
+        return (
+            k8s_full_name(name=self.pvc.metadata.name, namespace=self.pvc.metadata.namespace)
+            if self.pvc is not None
+            else None
+        )
 
 
 def kube_to_python(value, ignore_fields: Optional[List] = None, path: Optional[str] = None):
@@ -82,6 +94,50 @@ def if_none(value, none_value=None):
     return none_value if value is None else value
 
 
+def k8s_get_path(k8s_obj, path: str, default=None):
+    path_list = path.split(".")
+    obj = k8s_obj
+    for path_elem in path_list:
+        obj = obj.get(path_elem, None)
+        if obj is None:
+            return default
+    return obj
+
+
+def k8s_get_volumes(k8s_obj):
+    if k8s_obj.kind == "Pod":
+        return k8s_get_path(k8s_obj, "spec.volumes", [])
+    elif k8s_obj.kind == "CronJob":
+        return k8s_get_path(k8s_obj, "spec.jobTemplate.spec.template.spec.volumes", [])
+    elif k8s_obj.kind in ("Job", "Deployment"):
+        return k8s_get_path(k8s_obj, "spec.template.spec.volumes", [])
+    return []
+
+
+def k8s_get_volume_type(k8s_obj) -> str:
+    kind = k8s_obj.get("kind", None)
+    if kind == "PersistentVolume":
+        volume = k8s_obj.spec
+    elif kind is not None:
+        raise ValueError("Argument is not a k8s volume")
+    else:
+        volume = k8s_obj
+    for key in volume.keys():
+        if key not in (
+            "name",
+            "accessModes",
+            "capacity",
+            "claimRef",
+            "mountOptions",
+            "nodeAffinity",
+            "persistentVolumeReclaimPolicy",
+            "storageClassName",
+            "volumeMode",
+        ):
+            return key
+    raise ValueError("Argument is not a k8s volume")
+
+
 def main():
     ignore_fields = [
         "metadata.managedFields",
@@ -120,9 +176,9 @@ def main():
     parser.add_argument(
         "-o",
         "--output",
-        default="table",
-        help="Output PV / PVC in YAML format",
-        choices=["table", "yaml", "json"],
+        default="usage-table",
+        help="Output format of PV / PVC information",
+        choices=["pvc-table", "usage-table", "yaml", "json"],
     )
     parser.add_argument(
         "-s",
@@ -167,6 +223,28 @@ def main():
     else:
         logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=numeric_level)
 
+    pvpvc_infos = []
+    pvc_full_name_to_pvpvc_info_map = {}
+
+    def is_volume_selected_and_info(volume, k8s_namespace: Optional[str] = None):
+        pvc = volume.get("persistentVolumeClaim")
+        if pvc is not None and k8s_namespace:
+            pvc_name = pvc.claimName
+            pvpvc_info = pvc_full_name_to_pvpvc_info_map.get(k8s_full_name(pvc_name, k8s_namespace), None)
+            return pvpvc_info is not None, pvpvc_info
+
+        if not args.volume_types:
+            # All volumes are selected
+            return True, None
+
+        for volume_type in args.volume_types:
+            # ignore invalid types
+            if volume_type == "name":
+                continue
+            if volume.get(volume_type, None) is not None:
+                return True, None
+        return False, None
+
     kubeconfig = args.kubeconfig or os.getenv("KUBECONFIG")
     context = args.context
 
@@ -177,47 +255,82 @@ def main():
     pvs = dyn_client.resources.get(api_version="v1", kind="PersistentVolume")
     pv_list = pvs.get()
 
-    pvpvc_infos = []
-
-    output_table = args.output == "table"
+    output_pvc_table = args.output == "pvc-table"
+    output_usage_table = args.output == "usage-table"
     output_yaml = args.output == "yaml"
     output_json = args.output == "json"
 
-    if output_table:
-        if args.no_headers:
-            table = []
-        else:
-            header = ("PV", "PVC NAME", "PVC NAMESPACE")
-            table = [header]
-
     for pv in pv_list.items:
-        if args.volume_types and all(pv.spec.get(vol, None) is None for vol in args.volume_types):
+        if not is_volume_selected_and_info(pv.spec)[0]:
             continue
         pvpvc_info = PVPVCInfo(pv)
         pvpvc_infos.append(pvpvc_info)
         if (
             pv.spec is not None
             and pv.spec.claimRef is not None
-            and pv.spec.claimRef.kind is not None
-            and pv.spec.claimRef.apiVersion is not None
             and pv.spec.claimRef.name is not None
             and pv.spec.claimRef.namespace is not None
         ):
-            pvcs = dyn_client.resources.get(api_version=pv.spec.claimRef.apiVersion, kind=pv.spec.claimRef.kind)
+            pvcs = dyn_client.resources.get(kind=pv.spec.claimRef.kind or "PersistentVolumeClaim")
             pvc = pvcs.get(name=pv.spec.claimRef.name, namespace=pv.spec.claimRef.namespace)
             pvpvc_info.pvc = pvc
+            pvc_full_name_to_pvpvc_info_map[pvpvc_info.pvc_full_name] = pvpvc_info
 
-        if output_table:
-            table.append(
-                (
-                    pvpvc_info.pv_name,
-                    if_none(pvpvc_info.pvc_name, ""),
-                    if_none(pvpvc_info.pvc_namespace, ""),
+    if output_usage_table:
+        if args.no_headers:
+            pvpvc_usage_table = []
+        else:
+            header = ("KIND", "NAMESPACE", "NAME", "PVC NAME", "PV", "VOLUME TYPE")
+            pvpvc_usage_table = [header]
+
+        def process_volume(resource, volume):
+            volume_selected, pvpvc_info = is_volume_selected_and_info(volume, resource.metadata.namespace)
+            if volume_selected:
+                if pvpvc_info is not None:
+                    pvc_name = pvpvc_info.pvc_name
+                    pv_name = pvpvc_info.pv_name
+                else:
+                    pvc_name = ""
+                    pv_name = ""
+                pvpvc_usage_table.append(
+                    (
+                        resource.kind,
+                        resource.metadata.namespace,
+                        resource.metadata.name,
+                        pvc_name,
+                        pv_name,
+                        k8s_get_volume_type(volume if pvpvc_info is None else pvpvc_info.pv),
+                    )
                 )
-            )
 
-    if output_table:
-        print_table(table)
+        for kind in ("Deployment", "Job", "CronJob", "Pod"):
+            resources = dyn_client.resources.get(kind=kind)
+            resource_list = resources.get()
+            for resource in resource_list.items:
+                volumes = k8s_get_volumes(resource)
+                for volume in volumes:
+                    process_volume(resource, volume)
+
+        print_table(pvpvc_usage_table)
+
+    if output_pvc_table:
+        if args.no_headers:
+            pvpvc_table = []
+        else:
+            header = ("PV", "PVC NAME", "PVC NAMESPACE")
+            pvpvc_table = [header]
+
+        for pvpvc_info in pvpvc_infos:
+            if output_pvc_table:
+                pvpvc_table.append(
+                    (
+                        pvpvc_info.pv_name,
+                        if_none(pvpvc_info.pvc_name, ""),
+                        if_none(pvpvc_info.pvc_namespace, ""),
+                    )
+                )
+
+        print_table(pvpvc_table)
 
     if output_yaml or output_json:
 
