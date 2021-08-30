@@ -14,6 +14,7 @@ import yaml
 from kubernetes import config
 from kubernetes.client.api import core_v1_api
 from openshift.dynamic import DynamicClient
+import asteval
 
 LOG = logging.getLogger(__name__)
 
@@ -123,16 +124,20 @@ def k8s_get_volume_type(k8s_obj) -> str:
     else:
         volume = k8s_obj
     for key in volume.keys():
-        if key not in (
-            "name",
-            "accessModes",
-            "capacity",
-            "claimRef",
-            "mountOptions",
-            "nodeAffinity",
-            "persistentVolumeReclaimPolicy",
-            "storageClassName",
-            "volumeMode",
+        if (
+            key
+            not in (
+                "name",
+                "accessModes",
+                "capacity",
+                "claimRef",
+                "mountOptions",
+                "nodeAffinity",
+                "persistentVolumeReclaimPolicy",
+                "storageClassName",
+                "volumeMode",
+            )
+            and getattr(volume.get(key), "get", None) is not None
         ):
             return key
     raise ValueError("Argument is not a k8s volume")
@@ -202,6 +207,14 @@ def main():
         action="append",
         help="Select only persistent volumes of TYPE (e.g. nfs, hostPath)",
     )
+    parser.add_argument(
+        "-e",
+        "--select-expr",
+        metavar="EXPR",
+        default=None,
+        dest="volume_expr",
+        help="Select volume by using Python-like expression (e.g. '\"nfs\" in volume')",
+    )
 
     args = parser.parse_args()
 
@@ -223,8 +236,23 @@ def main():
     else:
         logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=numeric_level)
 
+    if args.volume_expr and args.volume_types:
+        print("-v / --select-volume and -e / --select-expr cannot be specified at the same time", file=sys.stderr)
+        sys.exit(1)
+
     pvpvc_infos = []
     pvc_full_name_to_pvpvc_info_map = {}
+
+    if args.volume_expr:
+        aeval = asteval.Interpreter(use_numpy=False)
+        try:
+            code = aeval.parse(args.volume_expr)
+        except:
+            errmsg = sys.exc_info()[1]
+            if len(aeval.error) > 0:
+                errmsg = "\n".join(aeval.error[0].get_error())
+            print("Error: Could not compile expression: {}".format(errmsg), file=sys.stderr)
+            sys.exit(1)
 
     def is_volume_selected_and_info(volume, k8s_namespace: Optional[str] = None):
         pvc = volume.get("persistentVolumeClaim")
@@ -233,16 +261,29 @@ def main():
             pvpvc_info = pvc_full_name_to_pvpvc_info_map.get(k8s_full_name(pvc_name, k8s_namespace), None)
             return pvpvc_info is not None, pvpvc_info
 
-        if not args.volume_types:
+        if not args.volume_types and not args.volume_expr:
             # All volumes are selected
             return True, None
 
-        for volume_type in args.volume_types:
-            # ignore invalid types
-            if volume_type == "name":
-                continue
-            if volume.get(volume_type, None) is not None:
-                return True, None
+        if args.volume_expr:
+            aeval.symtable["volume"] = volume
+            try:
+                result = aeval.run(code, expr=args.volume_expr, lineno=0)
+            except:
+                errmsg = sys.exc_info()[1]
+                if len(aeval.error) > 0:
+                    errmsg = "\n".join(aeval.error[0].get_error())
+                print("Error: Evaluation failed: \n{}".format(errmsg), file=sys.stderr)
+                sys.exit(1)
+            return bool(result), None
+
+        if args.volume_types:
+            for volume_type in args.volume_types:
+                # ignore invalid types
+                if volume_type == "name":
+                    continue
+                if volume.get(volume_type, None) is not None:
+                    return True, None
         return False, None
 
     kubeconfig = args.kubeconfig or os.getenv("KUBECONFIG")
@@ -280,7 +321,7 @@ def main():
         if args.no_headers:
             pvpvc_usage_table = []
         else:
-            header = ("KIND", "NAMESPACE", "NAME", "PVC NAME", "PV", "VOLUME TYPE")
+            header = ("KIND", "NAMESPACE", "NAME", "PVC NAME", "PV", "VOL TYPE", "VOL PATH")
             pvpvc_usage_table = [header]
 
         def process_volume(resource, volume):
@@ -289,9 +330,21 @@ def main():
                 if pvpvc_info is not None:
                     pvc_name = pvpvc_info.pvc_name
                     pv_name = pvpvc_info.pv_name
+                    pv_volume_type = k8s_get_volume_type(pvpvc_info.pv)
+                    if pv_volume_type:
+                        pv_volume = pvpvc_info.pv.spec.get(pv_volume_type)
+                        pv_volume_path = pv_volume.get("path", None)
+                    else:
+                        pv_volume_path = None
                 else:
                     pvc_name = ""
                     pv_name = ""
+                    pv_volume_type = k8s_get_volume_type(volume)
+                    if pv_volume_type:
+                        pv_volume_path = volume.get(pv_volume_type, {}).get("path", None)
+                    else:
+                        pv_volume_path = None
+
                 pvpvc_usage_table.append(
                     (
                         resource.kind,
@@ -299,7 +352,8 @@ def main():
                         resource.metadata.name,
                         pvc_name,
                         pv_name,
-                        k8s_get_volume_type(volume if pvpvc_info is None else pvpvc_info.pv),
+                        if_none(pv_volume_type, ""),
+                        if_none(pv_volume_path, ""),
                     )
                 )
 
@@ -317,16 +371,25 @@ def main():
         if args.no_headers:
             pvpvc_table = []
         else:
-            header = ("PV", "PVC NAME", "PVC NAMESPACE")
+            header = ("PV", "PVC NAME", "PVC NAMESPACE", "VOL TYPE", "VOL PATH")
             pvpvc_table = [header]
 
         for pvpvc_info in pvpvc_infos:
             if output_pvc_table:
+                pv_volume_type = k8s_get_volume_type(pvpvc_info.pv.spec)
+                if pv_volume_type:
+                    volume = pvpvc_info.pv.spec.get(pv_volume_type)
+                    pv_volume_path = volume.get("path", None)
+                else:
+                    pv_volume_path = None
+
                 pvpvc_table.append(
                     (
                         pvpvc_info.pv_name,
                         if_none(pvpvc_info.pvc_name, ""),
                         if_none(pvpvc_info.pvc_namespace, ""),
+                        if_none(pv_volume_type, ""),
+                        if_none(pv_volume_path, ""),
                     )
                 )
 
