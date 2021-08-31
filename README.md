@@ -185,14 +185,14 @@ optional arguments:
   --context CONTEXT     The name of the kubeconfig context to use (default: None)
 ```
 
-## kube-get-pv-pvc.py
+## kube-get-volume-info.py
 
-Get all persistent volumes and the persistent volume claims referenced to them.
+Get information about used storage volumes.
 
 ```
-usage: kube-get-pv-pvc.py [-h] [-l LOGLEVEL] [--kubeconfig KUBECONFIG] [--context CONTEXT] [-H] [-o {pvc-table,usage-table,yaml,json}] [-s] [-f] [-v VOLUME_TYPE] [-e EXPR] [-d]
+usage: kube-get-volume-info.py [-h] [-l LOGLEVEL] [--kubeconfig KUBECONFIG] [--context CONTEXT] [-H] [-o {pvc-table,usage-table,yaml,json}] [-s] [-f] [-v VOLUME_TYPE] [-e EXPR] [-d]
 
-Get PersistentVolumes and corresponding PersistentVolumeClaims
+Get Kubernetes volume information
 
 optional arguments:
   -h, --help            show this help message and exit

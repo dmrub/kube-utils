@@ -161,7 +161,7 @@ def main():
         "status",
     ]
     parser = argparse.ArgumentParser(
-        description="Get PersistentVolumes and corresponding PersistentVolumeClaims",
+        description="Get Kubernetes volume information",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
