@@ -190,8 +190,7 @@ optional arguments:
 Get all persistent volumes and the persistent volume claims referenced to them.
 
 ```
-usage: kube-get-pv-pvc.py [-h] [-l LOGLEVEL] [--kubeconfig KUBECONFIG] [--context CONTEXT] [-H] [-o {pvc-table,usage-table,yaml,json}] [-s] [-f]
-                          [-v VOLUME_TYPE] [-e EXPR]
+usage: kube-get-pv-pvc.py [-h] [-l LOGLEVEL] [--kubeconfig KUBECONFIG] [--context CONTEXT] [-H] [-o {pvc-table,usage-table,yaml,json}] [-s] [-f] [-v VOLUME_TYPE] [-e EXPR] [-d]
 
 Get PersistentVolumes and corresponding PersistentVolumeClaims
 
@@ -212,6 +211,7 @@ optional arguments:
                         Select only persistent volumes of TYPE (e.g. nfs, hostPath) (default: [])
   -e EXPR, --select-expr EXPR
                         Select volume by using Python-like expression (e.g. '"nfs" in volume') (default: None)
+  -d, --show-dependent  Output dependent Kubernetes objects (e.g. Pods controlled by ReplicaSet, Jobs controlled by CronJob, etc.) (default: False)
 ```
 
 ## kube-shlib.sh

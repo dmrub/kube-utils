@@ -53,33 +53,33 @@ class PVPVCInfo:
         )
 
 
-def kube_to_python(value, ignore_fields: Optional[List] = None, path: Optional[str] = None):
+def k8s_to_python(value, ignore_fields: Optional[List] = None, path: Optional[str] = None):
     if (
         isinstance(value, openshift.dynamic.ResourceField)
         or isinstance(value, openshift.dynamic.ResourceInstance)
         or isinstance(value, collections.abc.Mapping)
     ):
-        return kube_object_to_python(value, ignore_fields=ignore_fields, path=path)
+        return k8s_resource_to_python(value, ignore_fields=ignore_fields, path=path)
     elif isinstance(value, (list, tuple)):
-        return kube_list_to_python(value, ignore_fields=ignore_fields, path=path)
+        return k8s_list_to_python(value, ignore_fields=ignore_fields, path=path)
     return value
 
 
-def kube_list_to_python(list_value, ignore_fields: Optional[List] = None, path: Optional[str] = None):
+def k8s_list_to_python(list_value, ignore_fields: Optional[List] = None, path: Optional[str] = None):
     result = []
     for index, item in enumerate(list_value):
         cur_path = path + "." + str(index) if path else str(index)
         if not ignore_fields or cur_path not in ignore_fields:
-            result.append(kube_to_python(item, ignore_fields=ignore_fields, path=cur_path))
+            result.append(k8s_to_python(item, ignore_fields=ignore_fields, path=cur_path))
     return result
 
 
-def kube_object_to_python(obj, ignore_fields: Optional[List] = None, path: Optional[str] = None):
+def k8s_resource_to_python(obj, ignore_fields: Optional[List] = None, path: Optional[str] = None):
     result = {}
     for k, v in obj.items():
         cur_path = path + "." + str(k) if path else str(k)
         if not ignore_fields or cur_path not in ignore_fields:
-            result[k] = kube_to_python(v, ignore_fields=ignore_fields, path=cur_path)
+            result[k] = k8s_to_python(v, ignore_fields=ignore_fields, path=cur_path)
     return result
 
 
@@ -95,9 +95,9 @@ def if_none(value, none_value=None):
     return none_value if value is None else value
 
 
-def k8s_get_path(k8s_obj, path: str, default=None):
+def k8s_get_by_path(k8s_resource, path: str, default=None):
     path_list = path.split(".")
-    obj = k8s_obj
+    obj = k8s_resource
     for path_elem in path_list:
         obj = obj.get(path_elem, None)
         if obj is None:
@@ -105,24 +105,23 @@ def k8s_get_path(k8s_obj, path: str, default=None):
     return obj
 
 
-def k8s_get_volumes(k8s_obj):
-    if k8s_obj.kind == "Pod":
-        return k8s_get_path(k8s_obj, "spec.volumes", [])
-    elif k8s_obj.kind == "CronJob":
-        return k8s_get_path(k8s_obj, "spec.jobTemplate.spec.template.spec.volumes", [])
-    elif k8s_obj.kind in ("Job", "Deployment"):
-        return k8s_get_path(k8s_obj, "spec.template.spec.volumes", [])
-    return []
+def k8s_get_volumes(k8s_resource):
+    if k8s_resource.kind == "Pod":
+        return k8s_get_by_path(k8s_resource, "spec.volumes", [])
+    elif k8s_resource.kind == "CronJob":
+        return k8s_get_by_path(k8s_resource, "spec.jobTemplate.spec.template.spec.volumes", [])
+    else:  # e.g. Deployment, ReplicaSet, Job
+        return k8s_get_by_path(k8s_resource, "spec.template.spec.volumes", [])
 
 
-def k8s_get_volume_type(k8s_obj) -> str:
-    kind = k8s_obj.get("kind", None)
+def k8s_get_volume_type(k8s_resource) -> str:
+    kind = k8s_resource.get("kind", None)
     if kind == "PersistentVolume":
-        volume = k8s_obj.spec
+        volume = k8s_resource.spec
     elif kind is not None:
         raise ValueError("Argument is not a k8s volume")
     else:
-        volume = k8s_obj
+        volume = k8s_resource
     for key in volume.keys():
         if (
             key
@@ -141,6 +140,13 @@ def k8s_get_volume_type(k8s_obj) -> str:
         ):
             return key
     raise ValueError("Argument is not a k8s volume")
+
+# https://v1-18.docs.kubernetes.io/docs/concepts/workloads/controllers/garbage-collection/
+def k8s_has_owner(k8s_resource):
+    owner_refs = k8s_get_by_path(k8s_resource, "metadata.ownerReferences", [])
+    if not owner_refs:
+        return False
+    return any(bool(owner_ref.name) for owner_ref in owner_refs)
 
 
 def main():
@@ -215,6 +221,14 @@ def main():
         dest="volume_expr",
         help="Select volume by using Python-like expression (e.g. '\"nfs\" in volume')",
     )
+    parser.add_argument(
+        "-d",
+        "--show-dependent",
+        default=False,
+        help="Output dependent Kubernetes objects (e.g. Pods controlled by ReplicaSet, Jobs controlled by CronJob, "
+        "etc.) ",
+        action="store_true",
+    )
 
     args = parser.parse_args()
 
@@ -254,7 +268,11 @@ def main():
             print("Error: Could not compile expression: {}".format(errmsg), file=sys.stderr)
             sys.exit(1)
 
-    def is_volume_selected_and_info(volume, k8s_namespace: Optional[str] = None):
+    def is_volume_selected_and_info(volume, resource: Optional = None):
+        if resource:
+            k8s_namespace = resource.metadata.namespace
+        else:
+            k8s_namespace = None
         pvc = volume.get("persistentVolumeClaim")
         if pvc is not None and k8s_namespace:
             pvc_name = pvc.claimName
@@ -267,6 +285,8 @@ def main():
 
         if args.volume_expr:
             aeval.symtable["volume"] = volume
+            aeval.symtable["resource"] = resource
+            aeval.symtable["namespace"] = k8s_namespace
             try:
                 result = aeval.run(code, expr=args.volume_expr, lineno=0)
             except:
@@ -325,7 +345,7 @@ def main():
             pvpvc_usage_table = [header]
 
         def process_volume(resource, volume):
-            volume_selected, pvpvc_info = is_volume_selected_and_info(volume, resource.metadata.namespace)
+            volume_selected, pvpvc_info = is_volume_selected_and_info(volume, resource)
             if volume_selected:
                 if pvpvc_info is not None:
                     pvc_name = pvpvc_info.pvc_name
@@ -357,13 +377,14 @@ def main():
                     )
                 )
 
-        for kind in ("Deployment", "Job", "CronJob", "Pod"):
+        for kind in ("Deployment", "CronJob", "ReplicaSet", "Job", "Pod"):
             resources = dyn_client.resources.get(kind=kind)
             resource_list = resources.get()
             for resource in resource_list.items:
-                volumes = k8s_get_volumes(resource)
-                for volume in volumes:
-                    process_volume(resource, volume)
+                if args.show_dependent or not k8s_has_owner(resource):
+                    volumes = k8s_get_volumes(resource)
+                    for volume in volumes:
+                        process_volume(resource, volume)
 
         print_table(pvpvc_usage_table)
 
@@ -415,11 +436,11 @@ def main():
 
         all_pvpvc = []
         for pvpvc_info in pvpvc_infos:
-            pv = kube_to_python(pvpvc_info.pv, ignore_fields=ignore_fields)
+            pv = k8s_to_python(pvpvc_info.pv, ignore_fields=ignore_fields)
             if pvpvc_info.pvc is None:
                 pvc = None
             else:
-                pvc = kube_to_python(pvpvc_info.pvc, ignore_fields=ignore_fields)
+                pvc = k8s_to_python(pvpvc_info.pvc, ignore_fields=ignore_fields)
 
             if args.output_to_files:
                 if args.separate_pvc:
