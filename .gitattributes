@@ -1,0 +1,20 @@
+# Auto detect text files and perform LF normalization
+*       text=auto
+
+# Shell scripts require LF
+*.sh    text eol=lf
+kube-backup text eol=lf
+kube-create-admin-user text eol=lf
+kube-create-conf-from-token text eol=lf
+kube-docker-env text eol=lf
+kube-get-bearer-token text eol=lf
+kube-get-gpu-nodes text eol=lf
+kube-get-gpu-pods text eol=lf
+kube-get-node-services text eol=lf
+kube-list-all-images text eol=lf
+kube-match-pod text eol=lf
+kube-merge-config text eol=lf
+kube-wait-for-pod text eol=lf
+
+# Batch scripts require lf
+*.bat   text eol=crlf
