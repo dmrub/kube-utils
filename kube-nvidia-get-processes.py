@@ -263,8 +263,8 @@ def main():
                             for line in stdout.splitlines(keepends=False):
                                 proc_path, cmdline = line.split('\t', maxsplit=1)
                                 if not proc_path.startswith('/proc/'):
-                                    LOG.error('Unexpected command result, string should start with "/proc/": %s',
-                                              proc_path)
+                                    LOG.error('Unexpected command result from pod %s, string should start with "/proc/": %s',
+                                              pod_name, proc_path)
                                     continue
                                 try:
                                     pid = int(proc_path[6:])
@@ -367,7 +367,7 @@ def main():
 
             command = 'sh -c \'for p in /proc/*; do if [ -e "$p/cmdline" ]; then printf "%s\\t%s\\t%s\\t%s\\n" "$p" "$(' \
                       'readlink "$p/ns/pid")" "$(grep NSpid: "$p/status" | tr "\\t" " ")" "$(tr \\\\0 " " < ' \
-                      '"$p/cmdline")"; fi; done\' '
+                      '"$p/cmdline" | tr "\\t" " ")"; fi; done\' '
 
             stdout, stderr, rc = k8s_exec(api, node_pod_name, node_pod_namespace, command, node_pod_container_name)
             # print('processes: {} {} {}'.format(stdout, stderr, rc))
@@ -375,7 +375,11 @@ def main():
                 host_process_information = []
                 pid_ns_to_container_map = {}
                 for line in stdout.splitlines(keepends=False):
-                    proc_path, pid_ns, nspid, cmdline = line.split('\t')
+                    try:
+                        proc_path, pid_ns, nspid, cmdline = line.split('\t')
+                    except ValueError:
+                        LOG.exception('Expected 4 fields in the line %s but got %r', line, line.split('\t'))
+                        continue
                     if not pid_ns:
                         LOG.warning('Pod %s namespace %s on node %s: Missing pid_ns in line: %s',
                                     node_pod_name, node_pod_namespace, gpu_node, line)
