@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import pprint
 import argparse
 import collections
 import json
@@ -17,7 +18,6 @@ from openshift.dynamic import DynamicClient
 import asteval
 
 LOG = logging.getLogger(__name__)
-
 
 def k8s_full_name(name: str, namespace: str) -> str:
     return "{}/{}".format(name, namespace)
@@ -162,14 +162,14 @@ def main():
     ]
     parser = argparse.ArgumentParser(
         description="Get Kubernetes volume information",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
         "-l",
         "--log",
         dest="loglevel",
         default="WARNING",
-        help="log level (use one of CRITICAL,ERROR,WARNING,INFO,DEBUG)",
+        help="log level (use one of CRITICAL,ERROR,WARNING,INFO,DEBUG) (default: %(default)s)",
     )
     parser.add_argument(
         "--kubeconfig",
@@ -188,7 +188,7 @@ def main():
         "-o",
         "--output",
         default="usage-table",
-        help="Output format of PV / PVC information",
+        help="Output format of PV / PVC information (default: %(default)s)",
         choices=["pvc-table", "usage-table", "yaml", "json"],
     )
     parser.add_argument(
@@ -219,14 +219,22 @@ def main():
         metavar="EXPR",
         default=None,
         dest="volume_expr",
-        help="Select volume by using Python-like expression (e.g. '\"nfs\" in volume')",
+        help="Select the volume with a Python-like expression (implemented by the asteval module).\n"
+             "The expression has access to the variables \"volume\", \"namespace\" and \"resource\",\n"
+             "which can be used as dictionaries except for the operation \"in\". \n"
+             "Use the DEBUG protocol level to print all variables to stderr or the print function of the expression.\n"
+             "Examples:\n"
+             " print(\"resource is\", resource)                                  - print resource variable\n"
+             " \"nfs\" in keys(volume)                                           - select NFS volumes only\n"
+             " namespace != \"kube-system\" and \"configMap\" not in volume.keys() - select non-configMap volumes in "
+             "non kube-system namespaces\n\n"
     )
     parser.add_argument(
         "-d",
         "--show-dependent",
         default=False,
         help="Output dependent Kubernetes objects (e.g. Pods controlled by ReplicaSet, Jobs controlled by CronJob, "
-        "etc.) ",
+        "etc.)",
         action="store_true",
     )
 
@@ -258,7 +266,7 @@ def main():
     pvc_full_name_to_pvpvc_info_map = {}
 
     if args.volume_expr:
-        aeval = asteval.Interpreter(use_numpy=False)
+        aeval = asteval.Interpreter(use_numpy=False, writer=sys.stderr)
         try:
             code = aeval.parse(args.volume_expr)
         except:
@@ -284,6 +292,10 @@ def main():
             return True, None
 
         if args.volume_expr:
+            LOG.debug('variable volume = %s', pprint.pformat(volume, width=80, indent=2, compact=True))
+            LOG.debug('variable resource = %s', pprint.pformat(resource, width=80, indent=2, compact=True))
+            LOG.debug('variable namespace = %s', pprint.pformat(k8s_namespace, width=80, indent=2, compact=True))
+
             aeval.symtable["volume"] = volume
             aeval.symtable["resource"] = resource
             aeval.symtable["namespace"] = k8s_namespace
