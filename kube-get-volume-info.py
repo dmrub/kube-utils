@@ -390,13 +390,14 @@ def main():
                 )
 
         for kind in ("Deployment", "CronJob", "ReplicaSet", "Job", "Pod"):
-            resources = dyn_client.resources.get(kind=kind)
-            resource_list = resources.get()
-            for resource in resource_list.items:
-                if args.show_dependent or not k8s_has_owner(resource):
-                    volumes = k8s_get_volumes(resource)
-                    for volume in volumes:
-                        process_volume(resource, volume)
+            resources_list_by_kind = dyn_client.resources.search(kind=kind)
+            for resource_by_kind in resources_list_by_kind:
+                resource_list = resource_by_kind.get()
+                for resource in resource_list.items:
+                    if args.show_dependent or not k8s_has_owner(resource):
+                        volumes = k8s_get_volumes(resource)
+                        for volume in volumes:
+                            process_volume(resource, volume)
 
         print_table(pvpvc_usage_table)
 
