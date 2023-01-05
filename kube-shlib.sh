@@ -29,6 +29,10 @@ msg() {
     echo >&2 "$*"
 }
 
+message() {
+    echo >&2 "$*"
+}
+
 is-true() {
     case "$1" in
         true | yes | 1) return 0 ;;
@@ -308,7 +312,7 @@ fi
 #     --debug
 #     --           end of options
 wait-for-pod() {
-    local num_run_checks=5 num_trials=0 delay=2 pod_ns debug_flag cur_ns
+    local num_run_checks=5 num_trials=0 delay=2 pod_ns debug_flag
     pod_ns=$(kube-current-namespace)
 
     while [[ $# -gt 0 ]]; do
