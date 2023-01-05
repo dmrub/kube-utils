@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+
+# Copyright 2019-2022 Dmitri Rubinstein
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -eo pipefail
+export LC_ALL=C
+unset CDPATH
+
+THIS_DIR=$( cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P )
+
+# shellcheck source=kube-shlib.sh
+source "$THIS_DIR/kube-shlib.sh"
+
+define-kubectl-funcs
+
+usage() {
+    echo "Test Kubernetes network"
+    echo ""
+    echo "$(basename "$0") [options]"
+    echo ""
+    echo "environment variables:"
+    echo "  KUBECTL                    Name of the kubectl command to use"
+    echo "  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL"
+    echo "  KUBE_CONTEXT               The name of the kubeconfig context to use"
+    echo "  KUBECTL_OPTS               Additional options for kubectl"
+    echo "options:"
+    echo "  -u, --user                 Name of the user service account in namespace kube-system (default: $USER_NAME)"
+    echo "  -c, --context              The name of the kubeconfig context to use."
+    echo "      --help                 Display this help and exit"
+    echo "      --                     End of options"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -c | --context)
+        KUBE_CONTEXT="$2"
+        shift 2
+        ;;
+    --context=*)
+        KUBE_CONTEXT="${1#*=}"
+        shift
+        ;;
+    -u | --user)
+        USER_NAME="$2"
+        shift 2
+        ;;
+    --user=*)
+        USER_NAME="${1#*=}"
+        shift
+        ;;
+    --help)
+        usage
+        exit
+        ;;
+    --)
+        shift
+        break
+        ;;
+    -*)
+        fatal "Unknown option $1"
+        ;;
+    *)
+        break
+        ;;
+    esac
+done
+
+
+IFS=" " read -r -a NODES <<< "$(run-kubectl-ctx get node -o go-template --template '{{range .items}} {{.metadata.name}}{{end}}')"
+
+JOB_NAMES=()
+JOB_NS=default
+
+message "Test network on all nodes"
+
+for NODE in "${NODES[@]}"; do
+    JOB_NAME=test-network-$NODE
+    message "Create job $JOB_NAME for node $NODE"
+
+    if ! RESULT=$(run-kubectl-ctx get job \
+                    --namespace="$JOB_NS" \
+                    -o go-template="{{range.items}}{{if eq .metadata.name \"$JOB_NAME\"}}true{{end}}{{end}}");
+    then
+        fatal "Could not get jobs in namespace $JOB_NS"
+    fi
+
+    if [[ "$RESULT" = "true" ]]; then
+        JOB_NAMES+=("$JOB_NAME")
+    else
+        # Create job first
+        if ! run-kubectl-ctx apply -f- <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "$JOB_NAME"
+  namespace: "$JOB_NS"
+spec:
+  template:
+    spec:
+      containers:
+      - name: test
+        image: ubuntu
+        command:
+          - "/bin/sh"
+        args:
+          - "-c"
+          - |
+            set -xe;
+            apt-get update -y;
+            apt-get install -y dnsutils iputils-ping iputils-tracepath;
+            ping -c5 8.8.8.8;
+            nslookup google.com;
+            ping -c5 google.com;
+            tracepath -n 8.8.8.8;
+      restartPolicy: Never
+      nodeName: "$NODE"
+  backoffLimit: 4
+EOF
+        then
+            fatal "Failed to create job $JOB_NAME on node $NODE"
+        else
+            message "Created job $JOB_NAME on node $NODE"
+            JOB_NAMES+=("$JOB_NAME")
+        fi
+    fi
+done
+
+
+for JOB_NAME in "${JOB_NAMES[@]}"; do
+    message "Waiting for job $JOB_NAME in namespace $JOB_NS ..."
+    JOB_COMPLETE=
+
+    while true; do
+        if RESULT=$(run-kubectl-ctx get jobs \
+                        --namespace="$JOB_NS" \
+                        "$JOB_NAME" \
+                        -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}');
+        then
+            if [[ "$RESULT" = "True" ]]; then
+                JOB_COMPLETE=false
+                break
+            fi
+        else
+            fatal "Could not wait for job $JOB_NAME in namespace $JOB_NS"
+        fi
+        if RESULT=$(run-kubectl-ctx get jobs \
+                        --namespace="$JOB_NS" \
+                        "$JOB_NAME" \
+                        -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}');
+        then
+            if [[ "$RESULT" = "True" ]]; then
+                JOB_COMPLETE=true
+                break
+            fi
+        else
+            fatal "Could not wait for job $JOB_NAME in namespace $JOB_NS"
+        fi
+        sleep 5
+    done
+
+    if [[ "$JOB_COMPLETE" != "true" ]]; then
+        fatal "Job $JOB_NAME in namespace $JOB_NS failed"
+    else
+        message "Job $JOB_NAME in namespace $JOB_NS complete, deleting"
+        run-kubectl-ctx delete --namespace="$JOB_NS" job "$JOB_NAME"
+    fi
+done
+
+message "Test successfully completed"

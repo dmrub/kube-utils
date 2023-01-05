@@ -130,6 +130,27 @@ Wait until Kubernetes pod runs with the name starting with pod_name_prefix.
      --debug                 Enable debug output
 ```
 
+## kube-test-network
+
+Performs network operations such as pinging the IP address 8.8.8.8 and DNS lookup of google.com to test network connectivity in the cluster.
+
+```
+Test Kubernetes network
+
+kube-test-network [options]
+
+environment variables:
+  KUBECTL                    Name of the kubectl command to use
+  KUBECTL_BIN                Full path to the kubectl binary. This variable has precedence over KUBECTL
+  KUBE_CONTEXT               The name of the kubeconfig context to use
+  KUBECTL_OPTS               Additional options for kubectl
+options:
+  -u, --user                 Name of the user service account in namespace kube-system (default: )
+  -c, --context              The name of the kubeconfig context to use.
+      --help                 Display this help and exit
+      --                     End of options
+```
+
 ## kube-backup
 Backup Kubernetes state to set of YAML files. This tool is based on https://github.com/pieterlange/kube-backup .
 ```
