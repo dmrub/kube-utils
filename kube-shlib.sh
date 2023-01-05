@@ -96,16 +96,17 @@ define-kubectl-funcs() {
     KUBECTL_OPTS=${KUBECTL_OPTS:-}
 
     run-kubectl() {
-        # shellcheck disable=2086
+        # shellcheck disable=2086 disable=2317
         "${KUBECTL}" ${KUBECTL_OPTS} "$@"
     }
 
     run-oc() {
-        # shellcheck disable=2086
+        # shellcheck disable=2086 disable=2317
         "${OC}" ${KUBECTL_OPTS} "$@"
     }
 
     # Run kubernetes with configured context
+    # shellcheck disable=2317
     run-kubectl-ctx() {
         local opts=()
         if [[ -n "$KUBE_CONTEXT" ]]; then
@@ -115,6 +116,7 @@ define-kubectl-funcs() {
     }
 
     # Run kubernetes with configured context
+    # shellcheck disable=SC2317
     run-oc-ctx() {
         local opts=()
         if [[ -n "$KUBE_CONTEXT" ]]; then
@@ -123,10 +125,12 @@ define-kubectl-funcs() {
         run-oc "${opts[@]}" "$@"
     }
 
+    # shellcheck disable=SC2317
     kube-current-context() {
         run-kubectl-ctx config view --minify -o=jsonpath='{.current-context}'
     }
 
+    # shellcheck disable=SC2317
     kube-current-namespace() {
         local ns
         # local cur_ctx ns
@@ -140,16 +144,19 @@ define-kubectl-funcs() {
         fi
     }
 
+    # shellcheck disable=SC2317
     kube-current-server() {
         run-kubectl-ctx config view --minify -o=jsonpath='{..server}'
     }
 
+    # shellcheck disable=SC2317
     kube-set-namespace() {
         local ctx
         ctx=$(kube-current-context)
         run-kubectl-ctx config set-context "${ctx}" --namespace="${1}"
     }
 
+    # shellcheck disable=SC2317
     kube-server-version() {
         local server_version major minor patch
         server_version=$(run-kubectl-ctx --match-server-version=false version | grep "Server Version:")
@@ -158,6 +165,7 @@ define-kubectl-funcs() {
     }
 
     # kubectl version | grep "Server Version:"  | sed -E "s/.*GitVersion:\"v([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/"
+    # shellcheck disable=SC2317
     kube-server-version-as-int() {
         local server_version major minor patch
         server_version=$(run-kubectl-ctx --match-server-version=false | grep "Server Version:")
@@ -180,6 +188,7 @@ define-path-funcs() {
     case "$(uname)" in
         CYGWIN*)
             SED_NOCR_OPT=--binary
+            # shellcheck disable=SC2317
             natpath() {
                 if [[ -z "$1" ]]; then
                     echo "$*"
@@ -187,6 +196,7 @@ define-path-funcs() {
                     cygpath -w "$*"
                 fi
             }
+            # shellcheck disable=SC2317
             unixpath() {
                 if [[ -z "$1" ]]; then
                     echo "$*"
@@ -204,6 +214,7 @@ define-path-funcs() {
             else
                 SED_NOCR_OPT=--binary
             fi
+            # shellcheck disable=SC2317
             natpath() {
                 if [[ -z "$1" ]]; then
                     echo "$*"
@@ -222,6 +233,7 @@ define-path-funcs() {
                     fi
                 fi
             }
+            # shellcheck disable=SC2317
             unixpath() {
                 if [[ -z "$1" ]]; then
                     echo "$*"
@@ -233,7 +245,9 @@ define-path-funcs() {
             NAT_SEP="\\"
             ;;
         *)
+            # shellcheck disable=SC2317
             natpath() { echo "$*"; }
+            # shellcheck disable=SC2317
             unixpath() { echo "$*"; }
             # shellcheck disable=2034
             SED_NOCR_OPT=
