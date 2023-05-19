@@ -114,7 +114,10 @@ def k8s_end_exec(resp):
     if err['status'] == 'Success':
         rc = 0
     else:
-        rc = int(err['details']['causes'][0]['message'])
+        try:
+            rc = int(err['details']['causes'][0]['message'])
+        except ValueError:
+            rc = 1
     stdout = "".join(stdout)
     stderr = "".join(stderr)
     return stdout, stderr, rc
