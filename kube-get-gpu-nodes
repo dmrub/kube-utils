@@ -21,7 +21,7 @@ set -eo pipefail
 export LC_ALL=C
 unset CDPATH
 
-THIS_DIR=$( (cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P))
+THIS_DIR=$( cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P )
 
 # shellcheck source=kube-shlib.sh
 source "$THIS_DIR/kube-shlib.sh"
