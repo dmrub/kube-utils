@@ -105,7 +105,7 @@ def k8s_get_by_path(k8s_resource, path: str, default=None):
     return obj
 
 
-def k8s_get_volumes(k8s_resource):
+def k8s_get_pod_volumes(k8s_resource):
     if k8s_resource.kind == "Pod":
         return k8s_get_by_path(k8s_resource, "spec.volumes", [])
     elif k8s_resource.kind == "CronJob":
@@ -276,12 +276,12 @@ def main():
             print("Error: Could not compile expression: {}".format(errmsg), file=sys.stderr)
             sys.exit(1)
 
-    def is_volume_selected_and_info(volume, resource: Optional = None):
+    def is_pod_volume_selected_and_info(pod_volume, resource: Optional = None):
         if resource:
             k8s_namespace = resource.metadata.namespace
         else:
             k8s_namespace = None
-        pvc = volume.get("persistentVolumeClaim")
+        pvc = pod_volume.get("persistentVolumeClaim")
         if pvc is not None and k8s_namespace:
             pvc_name = pvc.claimName
             pvpvc_info = pvc_full_name_to_pvpvc_info_map.get(k8s_full_name(pvc_name, k8s_namespace), None)
@@ -292,11 +292,11 @@ def main():
             return True, None
 
         if args.volume_expr:
-            LOG.debug('variable volume = %s', pprint.pformat(volume, width=80, indent=2, compact=True))
+            LOG.debug('variable volume = %s', pprint.pformat(pod_volume, width=80, indent=2, compact=True))
             LOG.debug('variable resource = %s', pprint.pformat(resource, width=80, indent=2, compact=True))
             LOG.debug('variable namespace = %s', pprint.pformat(k8s_namespace, width=80, indent=2, compact=True))
 
-            aeval.symtable["volume"] = volume
+            aeval.symtable["volume"] = pod_volume
             aeval.symtable["resource"] = resource
             aeval.symtable["namespace"] = k8s_namespace
             try:
@@ -314,9 +314,50 @@ def main():
                 # ignore invalid types
                 if volume_type == "name":
                     continue
-                if volume.get(volume_type, None) is not None:
+                if pod_volume.get(volume_type, None) is not None:
                     return True, None
         return False, None
+
+    def is_persistent_volume_selected(pv):
+        assert pv.kind == "PersistentVolume"
+        volume = pv.spec
+        resource = pv
+        if pv.spec.claimRef:
+            k8s_namespace = pv.spec.claimRef.namespace
+        else:
+            k8s_namespace = None
+
+        if not args.volume_types and not args.volume_expr:
+            # All volumes are selected
+            return True
+
+        if args.volume_expr:
+            LOG.debug('variable volume = %s', pprint.pformat(volume, width=80, indent=2, compact=True))
+            LOG.debug('variable resource = %s', pprint.pformat(resource, width=80, indent=2, compact=True))
+            LOG.debug('variable namespace = %s', pprint.pformat(k8s_namespace, width=80, indent=2, compact=True))
+
+            aeval.symtable["volume"] = volume
+            aeval.symtable["resource"] = resource
+            aeval.symtable["namespace"] = k8s_namespace
+            try:
+                result = aeval.run(code, expr=args.volume_expr, lineno=0)
+            except:
+                errmsg = sys.exc_info()[1]
+                if len(aeval.error) > 0:
+                    errmsg = "\n".join(aeval.error[0].get_error())
+                print("Error: Evaluation failed: \n{}".format(errmsg), file=sys.stderr)
+                sys.exit(1)
+            return bool(result)
+
+        if args.volume_types:
+            for volume_type in args.volume_types:
+                # ignore invalid types
+                if volume_type == "name":
+                    continue
+                if volume.get(volume_type, None) is not None:
+                    return True
+        return False
+
 
     kubeconfig = args.kubeconfig or os.getenv("KUBECONFIG")
     context = args.context
@@ -334,7 +375,7 @@ def main():
     output_json = args.output == "json"
 
     for pv in pv_list.items:
-        if not is_volume_selected_and_info(pv.spec)[0]:
+        if not is_persistent_volume_selected(pv):
             continue
         pvpvc_info = PVPVCInfo(pv)
         pvpvc_infos.append(pvpvc_info)
@@ -356,9 +397,9 @@ def main():
             header = ("KIND", "NAMESPACE", "NAME", "PVC NAME", "PV", "VOL TYPE", "VOL PATH")
             pvpvc_usage_table = [header]
 
-        def process_volume(resource, volume):
-            volume_selected, pvpvc_info = is_volume_selected_and_info(volume, resource)
-            if volume_selected:
+        def process_pod_volume(resource, pod_volume):
+            pod_volume_selected, pvpvc_info = is_pod_volume_selected_and_info(pod_volume, resource)
+            if pod_volume_selected:
                 if pvpvc_info is not None:
                     pvc_name = pvpvc_info.pvc_name
                     pv_name = pvpvc_info.pv_name
@@ -371,9 +412,9 @@ def main():
                 else:
                     pvc_name = ""
                     pv_name = ""
-                    pv_volume_type = k8s_get_volume_type(volume)
+                    pv_volume_type = k8s_get_volume_type(pod_volume)
                     if pv_volume_type:
-                        pv_volume_path = volume.get(pv_volume_type, {}).get("path", None)
+                        pv_volume_path = pod_volume.get(pv_volume_type, {}).get("path", None)
                     else:
                         pv_volume_path = None
 
@@ -395,9 +436,9 @@ def main():
                 resource_list = resource_by_kind.get()
                 for resource in resource_list.items:
                     if args.show_dependent or not k8s_has_owner(resource):
-                        volumes = k8s_get_volumes(resource)
-                        for volume in volumes:
-                            process_volume(resource, volume)
+                        pod_volumes = k8s_get_pod_volumes(resource)
+                        for volume in pod_volumes:
+                            process_pod_volume(resource, volume)
 
         print_table(pvpvc_usage_table)
 
