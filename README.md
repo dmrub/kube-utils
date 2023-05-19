@@ -91,7 +91,7 @@ Merges kubernetes-config-file into ~/.kube/config configuration file
 
 ## kube-rsync
 
-Transfer files and directories with rsync to and from running container. 
+Transfer files and directories with rsync to and from running container.
 `rsync` tool must be available in the container.
 
 ```
